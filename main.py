@@ -309,24 +309,30 @@ def blue_scores(rows, w_freq=0.5, w_omit=0.5):
     return scores, {"freq": freq, "omit": omit}
 
 
-def check_constraints(reds):
+def check_constraints(reds, **overrides):
+    _sum = overrides.get('sum_range', SUM_RANGE)
+    _odd = overrides.get('odd_range', ODD_RANGE)
+    _big = overrides.get('big_range', BIG_RANGE)
+    _span = overrides.get('span_range', SPAN_RANGE)
+    _consec = overrides.get('max_consec', MAX_CONSEC)
+    _zone = overrides.get('zone_max', ZONE_MAX_IN_ONE)
     s = sorted(reds)
-    if not (SUM_RANGE[0] <= sum(s) <= SUM_RANGE[1]): return False
-    if not (ODD_RANGE[0] <= sum(1 for x in s if x % 2) <= ODD_RANGE[1]): return False
-    if not (BIG_RANGE[0] <= sum(1 for x in s if x >= 18) <= BIG_RANGE[1]): return False
-    if not (SPAN_RANGE[0] <= s[-1] - s[0] <= SPAN_RANGE[1]): return False
+    if not (_sum[0] <= sum(s) <= _sum[1]): return False
+    if not (_odd[0] <= sum(1 for x in s if x % 2) <= _odd[1]): return False
+    if not (_big[0] <= sum(1 for x in s if x >= 18) <= _big[1]): return False
+    if not (_span[0] <= s[-1] - s[0] <= _span[1]): return False
     run = mx = 1
     for a, b in zip(s, s[1:]): run = run + 1 if b - a == 1 else 1; mx = max(mx, run)
-    if mx > MAX_CONSEC: return False
-    if max(Counter((x - 1) // 11 for x in s).values()) > ZONE_MAX_IN_ONE: return False
+    if mx > _consec: return False
+    if max(Counter((x - 1) // 11 for x in s).values()) > _zone: return False
     return True
 
 
-def draw_weighted(scores, k, tries=2000):
+def draw_weighted(scores, k, tries=2000, **constraints):
     nums = list(scores.keys()); weights = [scores[x] + 1e-6 for x in nums]
     for _ in range(tries):
         picked = sorted(random.choices(nums, weights=weights, k=k))
-        if len(set(picked)) == k and check_constraints(picked): return picked
+        if len(set(picked)) == k and check_constraints(picked, **constraints): return picked
     return sorted(random.sample(nums, k))
 
 
