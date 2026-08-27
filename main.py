@@ -915,7 +915,7 @@ class GenerateScreen(Screen):
                     self.result_box.add_widget(line)
                 self.gen_btn.disabled = False
                 self.gen_btn.text = "开始选号"
-                self.content.scroll_to(self.result_box)
+                self.scroll.scroll_to(self.result_box)
 
             _show()
 
@@ -1013,7 +1013,7 @@ class BacktestScreen(Screen):
                 self.bt_result.height = self.bt_result.minimum_height
                 self.bt_btn.disabled = False
                 self.bt_btn.text = "开始回测"
-                self.content.scroll_to(self.bt_result)
+                self.scroll.scroll_to(self.bt_result)
 
             _show()
 
