@@ -1,6 +1,6 @@
 [app]
 
-title = 双色球选号
+title = 鍙岃壊鐞冮€夊彿
 package.name = ssq
 package.domain = org.lottery
 source.dir = .
@@ -9,7 +9,7 @@ source.include_exts = py,png,jpg,kv,atlas,ttf
 source.exclude_exts = spec
 
 version = 1.0
-requirements = python3,kivy,requests,matplotlib,numpy,pil
+requirements = python3,kivy,requests,matplotlib,numpy,pillow
 orientation = portrait
 osx.python_version = 3
 osx.kivy_version = 2.3.0
@@ -27,4 +27,3 @@ warn_on_root = 0
 [buildozer]
 arch = armeabi-v7a
 osx.rootdir = .
-
