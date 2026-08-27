@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from kivy.app import App
+from kivy.uix.widget import Widget
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.boxlayout import BoxLayout
