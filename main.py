@@ -12,6 +12,7 @@ import re
 import uuid
 import threading
 import io
+import requests
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -36,14 +37,6 @@ from kivy.utils import get_color_from_hex
 from kivy.core.window import Window
 
 Window.clearcolor = (0.96, 0.96, 0.96, 1)
-
-# matplotlib for charts (Agg = no display needed)
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'WenQuanYi Micro Hei']
-matplotlib.rcParams['axes.unicode_minus'] = False
 
 # ============================================================
 # 核心常量
@@ -115,7 +108,6 @@ class DataManager:
         self.records_file = self.data_dir / "ssq_records.json"
 
     def fetch_all(self):
-        resp = requests = __import__('requests').requests
         r = requests.get(DATA_URL, params={
             "name": "ssq", "pageNo": 1, "pageSize": 5000, "systemType": "PC"
         }, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.cwl.gov.cn/"}, timeout=30)
@@ -341,71 +333,134 @@ def _one_backtest(rows, train_len, k, rounds, use_strategy, rw=None, bw=None):
 # 图表工具
 # ============================================================
 
-CHART_DIR = None
+class KivyBarChart(Widget):
+    """用 Kivy canvas 绘制的柱状图控件。
+    data: dict {label: value}
+    title: 图标题
+    color: 柱体颜色 (r,g,b,a) 默认蓝
+    labels: 可选 dict 映射 label 显示文本
+    backtest: bool，双柱对比图（回测用）
+    """
+    def __init__(self, data, title='', color=(0.20, 0.60, 0.86, 1), labels=None, backtest=False, **kw):
+        super().__init__(**kw)
+        self.data = data
+        self.chart_title = title
+        self.bar_color = color
+        self.label_map = labels or {}
+        self.backtest = backtest
+        self.size_hint_y = None
+        self.height = '200dp'
 
-def _gen_chart(fig_func, fname):
-    """用 matplotlib 生成图表，保存为 PNG，返回文件路径"""
-    global CHART_DIR
-    if CHART_DIR is None:
-        CHART_DIR = Path(__file__).parent / ".charts"
-    CHART_DIR.mkdir(exist_ok=True)
-    fpath = CHART_DIR / fname
-    fig = fig_func()
-    fig.savefig(str(fpath), dpi=120, bbox_inches='tight', facecolor='white')
-    plt.close(fig)
-    return str(fpath)
+    def on_size(self, *a):
+        self.canvas.clear()
+        self._draw()
+
+    def _draw(self):
+        w = self.width
+        h = self.height
+        if w <= 1 or h <= 1:
+            return
+        from kivy.graphics import Color, Rectangle, RoundedRectangle, Line
+
+        # 标题
+        if self.chart_title:
+            from kivy.core.text import Label as CoreLabel
+            c = CoreLabel(text=self.chart_title, font_size='14sp', bold=True)
+            c.refresh()
+            tex = c.texture
+            with self.canvas:
+                Color(0.17, 0.24, 0.31, 1)
+                Rectangle(texture=tex, pos=(w / 2 - tex.width / 2, h - tex.height * 1.6),
+                          size=(tex.width, tex.height))
+
+        top_margin = 30 if self.chart_title else 10
+        chart_w = w - 30
+        chart_h = h - top_margin - 26
+        if chart_h < 10:
+            chart_h = 10
+
+        with self.canvas:
+            Color(1, 1, 1, 1)
+            Rectangle(pos=(10, 24), size=(chart_w, chart_h))
+
+        if self.backtest:
+            self._draw_backtest(chart_w, chart_h, top_margin)
+        else:
+            self._draw_bars(chart_w, chart_h, top_margin)
+
+    def _draw_bars(self, chart_w, chart_h, top_margin):
+        from kivy.graphics import Color, Rectangle, RoundedRectangle
+        items = sorted(self.data.keys())
+        if not items:
+            return
+        vals = [self.data[k] for k in items]
+        vmax = max(vals) if vals else 1
+        if vmax <= 0:
+            vmax = 1
+        n = len(items)
+        gap = 4
+        bw = (chart_w - gap * (n + 1)) / n
+        base_y = 24
+        for i, k in enumerate(items):
+            lab = self.label_map.get(str(k), str(k))
+            v = self.data[k]
+            bh = (v / vmax) * chart_h
+            x = 10 + gap + i * (bw + gap)
+            with self.canvas:
+                Color(*self.bar_color)
+                RoundedRectangle(pos=(x, base_y), size=(bw, max(2, bh)), radius=[2])
+                # 数值
+                Color(0.95, 0.95, 0.95, 1)
+                Rectangle(pos=(x + 2, 12), size=(bw - 4, 12))
+
+    def _draw_backtest(self, chart_w, chart_h, top_margin):
+        from kivy.graphics import Color, Rectangle, RoundedRectangle
+        names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
+        sg = self.data.get('strat', {})
+        rg = self.data.get('rand', {})
+        sx = [sg.get(i, 0) for i in range(7)]
+        rx = [rg.get(i, 0) for i in range(7)]
+        vmax = max(max(sx), max(rx), 1)
+        if vmax <= 0:
+            vmax = 1
+        n = 7
+        gap = 3
+        bw = (chart_w - gap * (n + 1)) / n
+        base_y = 24
+        half = bw / 2
+        for i in range(n):
+            lab = names[i]
+            x = 10 + gap + i * (bw + gap)
+            bh1 = (sx[i] / vmax) * chart_h
+            bh2 = (rx[i] / vmax) * chart_h
+            with self.canvas:
+                Color(0.93, 0.30, 0.24, 1)
+                RoundedRectangle(pos=(x + 1, base_y), size=(half - 1, max(2, bh1)), radius=[2])
+                Color(0.20, 0.60, 0.86, 1)
+                RoundedRectangle(pos=(x + half, base_y), size=(half - 1, max(2, bh2)), radius=[2])
 
 
 def chart_freq(freq):
-    return _gen_chart(lambda: _plot_bar(freq, "红球出现频率"), "chart_freq.png")
+    return KivyBarChart(freq, "红球出现频率")
 
 def chart_omit(omit):
-    return _gen_chart(lambda: _plot_bar(omit, "红球遗漏值"), "chart_omit.png")
+    return KivyBarChart(omit, "红球遗漏值", color=(0.93, 0.30, 0.24, 1))
 
 def chart_score(scores):
-    return _gen_chart(lambda: _plot_bar(scores, "红球综合评分"), "chart_score.png")
+    return KivyBarChart(scores, "红球综合评分")
 
 def chart_tail_freq(tails):
-    return _gen_chart(lambda: _plot_bar(tails, "尾数频率"), "chart_tail.png")
+    return KivyBarChart(tails, "尾数频率")
 
 def chart_zone_freq(zones):
     z_names = {"0": "01-11", "1": "12-22", "2": "23-33"}
-    return _gen_chart(lambda: _plot_bar(zones, "区间出号", labels=z_names), "chart_zone.png")
+    return KivyBarChart(zones, "区间出号", labels=z_names)
 
 def chart_blue_freq(freq):
-    return _gen_chart(lambda: _plot_bar(freq, "蓝球出现频率"), "chart_bfreq.png")
+    return KivyBarChart(freq, "蓝球出现频率", color=(0.20, 0.60, 0.86, 1))
 
 def chart_backtest(strat_g, rand_g):
-    return _gen_chart(lambda: _plot_backtest(strat_g, rand_g), "chart_backtest.png")
-
-
-def _plot_bar(d, title, labels=None):
-    fig, ax = plt.subplots(figsize=(8, 3.5))
-    keys = sorted(d.keys())
-    vals = [d[k] for k in keys]
-    lbls = [labels.get(str(k), str(k)) if labels else str(k) for k in keys]
-    ax.bar(lbls, vals, color='#3498DB', edgecolor='none')
-    ax.set_title(title, fontsize=12, fontweight='bold')
-    ax.set_xlabel('')
-    for lab in ax.xaxis.get_ticklabels(): lab.set_rotation(45)
-    plt.tight_layout()
-    return fig
-
-
-def _plot_backtest(sg, rg):
-    fig, ax = plt.subplots(figsize=(8, 4))
-    g_names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
-    sx = [sg.get(i, 0) for i in range(7)]
-    rx = [rg.get(i, 0) for i in range(7)]
-    x = range(7)
-    w = 0.35
-    ax.bar([i - w for i in x], sx, w, label='策略', color='#E74C3C')
-    ax.bar([i + w for i in x], rx, w, label='随机', color='#3498DB')
-    ax.set_xticks(list(x)); ax.set_xticklabels(g_names)
-    ax.set_title('回测对比', fontsize=12, fontweight='bold')
-    ax.legend()
-    plt.tight_layout()
-    return fig
+    return KivyBarChart({"strat": strat_g, "rand": rand_g}, "回测对比", backtest=True)
 
 
 # ============================================================
@@ -516,8 +571,8 @@ class OverviewScreen(Screen):
             print(f"图表生成失败: {e}")
 
         for p in paths:
-            if p and os.path.exists(p):
-                self.content.add_widget(Image(source=p, size_hint_y=None, height='200dp', allow_stretch=True, keep_ratio=True))
+            if p:
+                self.content.add_widget(p)
 
         self.content.add_widget(Label(size_hint_y=None, height='40dp'))
         self.content.add_widget(Label(text="策略不提高中奖概率，理性购彩", size_hint_y=None, height='30dp',
@@ -635,8 +690,8 @@ class AnalysisScreen(Screen):
         except Exception as e:
             print(f"图表失败: {e}")
         for name, p in charts:
-            if p and os.path.exists(p):
-                self.content.add_widget(Image(source=p, size_hint_y=None, height='200dp', allow_stretch=True, keep_ratio=True))
+            if p:
+                self.content.add_widget(p)
 
         # 最新开奖
         self.content.add_widget(_title_row("历史开奖"))
@@ -911,8 +966,8 @@ class BacktestScreen(Screen):
                 # 图表
                 try:
                     p = chart_backtest(strat['grades'], rand['grades'])
-                    if p and os.path.exists(p):
-                        self.bt_result.add_widget(Image(source=p, size_hint_y=None, height='200dp'))
+                    if p:
+                        self.bt_result.add_widget(p)
                 except: pass
 
                 self.bt_result.height = self.bt_result.minimum_height
