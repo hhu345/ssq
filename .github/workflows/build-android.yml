@@ -46,9 +46,9 @@ jobs:
           mkdir -p ~/.android
           echo "y" | sdkmanager --sdk_root=/opt/android-sdk --licenses 2>/dev/null || true
 
-          # Run buildozer
-          cd "$(dirname "$0")" || cd .
+          # Run buildozer in the directory containing buildozer.spec
           buildozer android debug 2>&1 | tail -100
+        working-directory: ./ssq_mobile
         env:
           JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
 
