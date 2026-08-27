@@ -42,14 +42,19 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          # Accept Android SDK licenses
-          mkdir -p ~/.android
-          echo "y" | sdkmanager --sdk_root=/opt/android-sdk --licenses 2>/dev/null || true
-
+          # Set up environment
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
+          export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
+          
+          # Accept Android SDK licenses properly
+          yes | sdkmanager --licenses 2>&1 || true
+          
+          # Install required SDK components
+          sdkmanager "platform-tools" "build-tools;33.0.0" "platforms;android-33" 2>&1 || true
+          
           # Run buildozer (spec file is in repo root)
-          buildozer android debug 2>&1 | tail -100
-        env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          buildozer android debug 2>&1 | tail -150
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
