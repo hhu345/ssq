@@ -853,6 +853,7 @@ class GenerateScreen(Screen):
         self.content.add_widget(self.gen_btn)
 
         self.result_box = BoxLayout(orientation='vertical', size_hint_y=None, height='10dp', spacing=5)
+        self.result_box.bind(minimum_height=self.result_box.setter('height'))
         self.content.add_widget(self.result_box)
 
         self.content.add_widget(Label(size_hint_y=None, height='60dp'))
@@ -934,7 +935,6 @@ class GenerateScreen(Screen):
             def _show():
                 self._last_tickets = result
                 self.result_box.clear_widgets()
-                self.result_box.height = len(result) * 46 + 90
                 self.result_box.add_widget(_title_row(f"生成 {len(result)} 注（下方已尽量完整展示，可上下滚动）"))
                 for i, t in enumerate(result):
                     line = BoxLayout(size_hint_y=None, height='40dp', spacing=4)
@@ -1219,8 +1219,8 @@ class RecordsScreen(Screen):
             top.add_widget(del_btn)
             card.add_widget(top)
             balls = BoxLayout(size_hint_y=None, height='26dp', spacing=3)
-            for x in rec.get("red", []): balls.add_widget(_ball_label(f"{x:02d}", 0.85, RED))
-            balls.add_widget(_ball_label(f"{rec.get('blue', 0):02d}", 0.85, BLUE))
+            for x in rec.get("red", []): balls.add_widget(_ball_label(f"{x:02d}", 0.85, RED, '26dp'))
+            balls.add_widget(_ball_label(f"{rec.get('blue', 0):02d}", 0.85, BLUE, '26dp'))
             rh = rec.get('red_hit', '?')
             bh = rec.get('blue_hit', '?')
             balls.add_widget(Label(text=f"红:{rh} 蓝:{bh}", size_hint_x=0.2, height='24dp', font_size='10sp', color=GRAY))
