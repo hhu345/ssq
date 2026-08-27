@@ -398,38 +398,45 @@ class KivyBarChart(Widget):
             h = float(self.height)
         except Exception:
             h = 200.0
-        if w <= 1 or h <= 1:
+        if w <= 1 or h <= 5:
             return
         from kivy.graphics import Color, Rectangle, RoundedRectangle, Line
+        chart_w = w        # 占满宽度
+        chart_h = h - 26   # 底部留 26 画柱
+        if chart_h < 10:
+            chart_h = 10
 
-        # 标题
+        # 白色底
+        with self.canvas:
+            Color(1, 1, 1, 1)
+            Rectangle(pos=(0, 0), size=(w, h))
+
+        # 标题（深色，居中顶部）
         if self.chart_title:
             from kivy.core.text import Label as CoreLabel
-            c = CoreLabel(text=self.chart_title, font_size=14, bold=True)
+            c = CoreLabel(text=self.chart_title, font_size=15, bold=True, color=(0.17, 0.24, 0.31, 1))
             c.refresh()
             tex = c.texture
             with self.canvas:
                 Color(0.17, 0.24, 0.31, 1)
-                Rectangle(texture=tex, pos=(w / 2 - tex.width / 2, h - tex.height * 1.6),
+                Rectangle(texture=tex, pos=(w / 2 - tex.width / 2, h - tex.height * 1.1),
                           size=(tex.width, tex.height))
 
         top_margin = 30 if self.chart_title else 10
-        chart_w = w - 30
-        chart_h = h - top_margin - 26
-        if chart_h < 10:
-            chart_h = 10
-
-        with self.canvas:
-            Color(1, 1, 1, 1)
-            Rectangle(pos=(10, 24), size=(chart_w, chart_h))
-
+        base_y = 4
+        draw_h = chart_h - top_margin
+        if draw_h < 10:
+            draw_h = 10
         if self.backtest:
-            self._draw_backtest(chart_w, chart_h, top_margin)
+            self._draw_backtest(w, draw_h, top_margin, base_y)
         else:
-            self._draw_bars(chart_w, chart_h, top_margin)
+            self._draw_bars(w, draw_h, top_margin, base_y)
 
     def _draw_bars(self, chart_w, chart_h, top_margin):
         from kivy.graphics import Color, Rectangle, RoundedRectangle
+    def _draw_bars(self, chart_w, chart_h, top_margin, base_y=4):
+        from kivy.graphics import Color, Rectangle, RoundedRectangle
+        from kivy.core.text import Label as CoreLabel
         items = sorted(self.data.keys())
         if not items:
             return
@@ -438,23 +445,27 @@ class KivyBarChart(Widget):
         if vmax <= 0:
             vmax = 1
         n = len(items)
-        gap = 4
+        gap = 3
         bw = (chart_w - gap * (n + 1)) / n
-        base_y = 24
         for i, k in enumerate(items):
             lab = self.label_map.get(str(k), str(k))
             v = self.data[k]
             bh = (v / vmax) * chart_h
-            x = 10 + gap + i * (bw + gap)
+            x = gap + i * (bw + gap)
             with self.canvas:
                 Color(*self.bar_color)
                 RoundedRectangle(pos=(x, base_y), size=(bw, max(2, bh)), radius=[2])
-                # 数值
-                Color(0.95, 0.95, 0.95, 1)
-                Rectangle(pos=(x + 2, 12), size=(bw - 4, 12))
+                # 轴标签（柱下方小字）
+            c = CoreLabel(text=lab, font_size=8, color=(0.5, 0.5, 0.5, 1))
+            c.refresh(); tex = c.texture
+            with self.canvas:
+                Color(0.5, 0.5, 0.5, 1)
+                Rectangle(texture=tex, pos=(x + bw / 2 - tex.width / 2, base_y - tex.height * 1.2),
+                          size=(tex.width, tex.height))
 
-    def _draw_backtest(self, chart_w, chart_h, top_margin):
+    def _draw_backtest(self, chart_w, chart_h, top_margin, base_y=4):
         from kivy.graphics import Color, Rectangle, RoundedRectangle
+        from kivy.core.text import Label as CoreLabel
         names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
         sg = self.data.get('strat', {})
         rg = self.data.get('rand', {})
@@ -464,13 +475,12 @@ class KivyBarChart(Widget):
         if vmax <= 0:
             vmax = 1
         n = 7
-        gap = 3
+        gap = 2
         bw = (chart_w - gap * (n + 1)) / n
-        base_y = 24
         half = bw / 2
         for i in range(n):
             lab = names[i]
-            x = 10 + gap + i * (bw + gap)
+            x = gap + i * (bw + gap)
             bh1 = (sx[i] / vmax) * chart_h
             bh2 = (rx[i] / vmax) * chart_h
             with self.canvas:
@@ -478,6 +488,12 @@ class KivyBarChart(Widget):
                 RoundedRectangle(pos=(x + 1, base_y), size=(half - 1, max(2, bh1)), radius=[2])
                 Color(0.20, 0.60, 0.86, 1)
                 RoundedRectangle(pos=(x + half, base_y), size=(half - 1, max(2, bh2)), radius=[2])
+            c = CoreLabel(text=lab, font_size=9, color=(0.4, 0.4, 0.4, 1))
+            c.refresh(); tex = c.texture
+            with self.canvas:
+                Color(0.4, 0.4, 0.4, 1)
+                Rectangle(texture=tex, pos=(x + bw / 2 - tex.width / 2, base_y - tex.height * 1.2),
+                          size=(tex.width, tex.height))
 
 
 def chart_freq(freq):
@@ -507,13 +523,14 @@ def chart_backtest(strat_g, rand_g):
 # UI 辅助
 # ============================================================
 
-def _ball_label(text, color, bg):
-    """圆形球号标签"""
-    lbl = Label(text=text, font_size='16sp', bold=True, color=(1, 1, 1, 1),
-                size_hint=(None, None), size=('48dp', '48dp'), halign='center', valign='middle')
+def _ball_label(text, color, bg, size='48dp'):
+    """圆形球号标签，size 可调（'30dp'/'38dp'/'48dp'）"""
+    lbl = Label(text=text, font_size='12sp', bold=True, color=(1, 1, 1, 1),
+                size_hint=(None, None), size=(size, size), halign='center', valign='middle')
+    lbl.font_size = '11sp' if size in ('30dp','32dp','36dp') else '14sp'
     with lbl.canvas.before:
         Color(*bg)
-        lbl.bg_rect = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[24])
+        lbl.bg_rect = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[int(size.replace('dp',''))//2])
     lbl.bind(pos=lambda *a: setattr(lbl.bg_rect, 'pos', a[1]),
              size=lambda *a: setattr(lbl.bg_rect, 'size', a[1]))
     return lbl
@@ -536,6 +553,14 @@ def _section_box(child, **kw):
 
 def _title_row(text):
     lbl = Label(text=text, font_size='15sp', bold=True, color=DARK, size_hint_y=None, height='30dp')
+    return lbl
+
+
+def _hint(text):
+    """参数说明文字（灰色小字，滚动显示）"""
+    lbl = Label(text=text, font_size='11sp', color=GRAY, size_hint_y=None, height='30dp',
+                halign='left', valign='middle')
+    lbl.bind(size=lambda *a: setattr(lbl, 'text_size', (lbl.width, None)))
     return lbl
 
 
@@ -569,13 +594,13 @@ class OverviewScreen(Screen):
         rows = self.dm.get_data(1)
         if rows:
             r = rows[-1]
-            line = BoxLayout(size_hint_y=None, height='60dp', spacing=10)
-            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 1, RED))
-            line.add_widget(_ball_label(f"{r['blue']:02d}", 1, BLUE))
+            line = BoxLayout(size_hint_y=None, height='52dp', spacing=8)
+            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 1, RED, '40dp'))
+            line.add_widget(_ball_label(f"{r['blue']:02d}", 1, BLUE, '40dp'))
             self.content.add_widget(line)
             info = Label(text=f"第 {r['code']} 期  {r['date']} {r.get('week', '')}\n"
                          f"销售额: {r.get('sales', 0)//10000}万  奖池: {r.get('poolmoney', 0)//10000}万",
-                         size_hint_y=None, height='50dp', color=GRAY)
+                         size_hint_y=None, height='50dp', color=DARK, font_size='12sp')
             self.content.add_widget(info)
         else:
             self.content.add_widget(Label(text="暂无数据", color=GRAY, size_hint_y=None, height='40dp'))
@@ -589,17 +614,17 @@ class OverviewScreen(Screen):
         bhot = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bfreq[i])[:5]
         bcold = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bomit[i])[:5]
 
-        hbox = BoxLayout(size_hint_y=None, height='48dp', spacing=5)
+        hbox = GridLayout(cols=10, size_hint_y=None, height='48dp', spacing=3)
         for x in hot: hbox.add_widget(_ball_label(f"{x:02d}", 1, RED))
-        self.content.add_widget(_section_box(hbox))
+        self.content.add_widget(hbox)
 
-        hbox2 = BoxLayout(size_hint_y=None, height='48dp', spacing=5)
+        hbox2 = GridLayout(cols=10, size_hint_y=None, height='48dp', spacing=3)
         for x in cold: hbox2.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1)))
-        self.content.add_widget(_section_box(hbox2))
+        self.content.add_widget(hbox2)
 
-        bline = BoxLayout(size_hint_y=None, height='48dp', spacing=5)
+        bline = GridLayout(cols=8, size_hint_y=None, height='48dp', spacing=3)
         for x in bhot: bline.add_widget(_ball_label(f"{x:02d}", 1, BLUE))
-        self.content.add_widget(_section_box(bline))
+        self.content.add_widget(bline)
 
         self.content.add_widget(_title_row("图表"))
         paths = []
@@ -737,10 +762,10 @@ class AnalysisScreen(Screen):
         self.content.add_widget(_title_row("历史开奖"))
         hist_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=min(300, max(80, n * 12)))
         for r in reversed(rows[-min(20, len(rows)):]):
-            line = BoxLayout(size_hint_y=None, height='32dp', spacing=5)
-            line.add_widget(Label(text=f"[{r['code']}]", size_hint_x=0.25, height='28dp', font_size='10sp', color=GRAY))
-            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.8, RED))
-            line.add_widget(_ball_label(f"{r['blue']:02d}", 0.8, BLUE))
+            line = GridLayout(cols=8, size_hint_y=None, height='34dp', spacing=2)
+            line.add_widget(Label(text=f"{r['code']}", size_hint_x=1.6, height='30dp', font_size='9sp', color=DARK))
+            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '30dp'))
+            line.add_widget(_ball_label(f"{r['blue']:02d}", 0.8, BLUE, '30dp'))
             hist_grid.add_widget(line)
         self.content.add_widget(hist_grid)
         self.content.add_widget(Label(size_hint_y=None, height='50dp'))
@@ -771,6 +796,7 @@ class GenerateScreen(Screen):
         self.content.add_widget(_row(self.play_spinner))
 
         self.content.add_widget(_title_row("权重设置"))
+        self.content.add_widget(_hint("四项权重建议 0.3/0.35/0.2/0.15（合计≈1），滑动可调，越接近 1 越均衡。"))
         w_grid = GridLayout(cols=2, size_hint_y=None, height='160dp', spacing=5)
         self.w_freq_s = Slider(min=0, max=1, value=W_FREQ, size_hint_x=0.7)
         self.w_freq_l = Label(text=f"频率: {W_FREQ}", size_hint_x=0.3, height='30dp')
@@ -794,6 +820,7 @@ class GenerateScreen(Screen):
         self.content.add_widget(w_grid)
 
         self.content.add_widget(_title_row("约束条件"))
+        self.content.add_widget(_hint("和值=6红球和；奇数=红球奇数个数；大号=≥18的个数；跨度=最大-最小；最长连号；单区最多号数(01-11/12-22/23-33区)。"))
         c_grid = GridLayout(cols=2, size_hint_y=None, height='200dp', spacing=5)
         self.c_sum = TextInput(text=f"{SUM_RANGE[0]}-{SUM_RANGE[1]}", multiline=False,
                                 hint_text="和值区间", size_hint_x=1, height='36dp')
@@ -904,15 +931,25 @@ class GenerateScreen(Screen):
 
             @mainthread
             def _show():
+                self._last_tickets = result
                 self.result_box.clear_widgets()
-                self.result_box.height = len(result) * 40 + 20
+                self.result_box.height = len(result) * 44 + 60
                 self.result_box.add_widget(_title_row(f"生成 {len(result)} 注"))
                 for i, t in enumerate(result):
-                    line = BoxLayout(size_hint_y=None, height='36dp', spacing=5)
-                    line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=0.1, height='32dp', font_size='11sp'))
+                    line = BoxLayout(size_hint_y=None, height='40dp', spacing=5)
+                    line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=0.08, height='32dp', font_size='11sp', color=DARK))
                     for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED))
                     line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE))
+                    save_btn = Button(text="存", size_hint_x=0.08, height='32dp', font_size='13sp',
+                                      background_color=ACCENT, color=(1, 1, 1, 1))
+                    save_btn.bind(on_press=lambda *a, tt=t: self._save_ticket(tt))
+                    line.add_widget(save_btn)
                     self.result_box.add_widget(line)
+                if result:
+                    all_btn = Button(text=f"一键存入全部 {len(result)} 注到购彩记录", size_hint_y=None, height='44dp',
+                                     background_color=BLUE, color=(1, 1, 1, 1), font_size='14sp')
+                    all_btn.bind(on_press=self._save_all)
+                    self.result_box.add_widget(all_btn)
                 self.gen_btn.disabled = False
                 self.gen_btn.text = "开始选号"
                 self.scroll.scroll_to(self.result_box)
@@ -920,6 +957,44 @@ class GenerateScreen(Screen):
             _show()
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _latest_code(self):
+        try:
+            rows = self.dm.get_data(1)
+            r = rows[-1] if rows else None
+            return str(r["code"]) if r else "", str(r["date"]) if r else today_str()
+        except Exception:
+            return "", today_str()
+
+    def _save_ticket(self, t):
+        try:
+            code, date = self._latest_code()
+            self.dm.add_record(code, date, t["red"], t["blue"], 1, 2)
+            self._toast("已存入购彩记录")
+        except Exception as e:
+            self._toast(f"保存失败: {e}")
+
+    def _save_all(self, *a):
+        tickets = getattr(self, '_last_tickets', [])
+        if not tickets:
+            self._toast("没有可保存的选号结果")
+            return
+        code, date = self._latest_code()
+        n = 0
+        for t in tickets:
+            try:
+                self.dm.add_record(code, date, t["red"], t["blue"], 1, 2)
+                n += 1
+            except Exception:
+                pass
+        self._toast(f"已存入 {n} 注到购彩记录")
+
+    def _toast(self, msg):
+        from kivy.uix.label import Label
+        from kivy.uix.popup import Popup
+        pop = Popup(title="提示", content=Label(text=msg, halign="center"),
+                    size_hint=(0.6, None), height='120dp')
+        pop.open()
 
 
 # ============================================================
@@ -1046,15 +1121,25 @@ class RecordsScreen(Screen):
     def _show_stats(self):
         rows = self.dm.get_data(100000)
         recs, stats = self.dm.check_records(rows)
-        box = BoxLayout(orientation='vertical', size_hint_y=None, height='90dp', padding=5, spacing=2)
+        box = BoxLayout(orientation='vertical', size_hint_y=None, height='116dp', padding=5, spacing=2)
         box.add_widget(Label(text="统计", font_size='14sp', bold=True, size_hint_y=None, height='28dp'))
         box.add_widget(Label(text=f"总注数: {stats['count']}  待开奖: {stats['pending']}",
-                              size_hint_y=None, height='24dp', font_size='11sp', color=GRAY))
+                              size_hint_y=None, height='24dp', font_size='11sp', color=DARK))
         net_str = f"净盈亏: {stats['net']:+.0f}元"
         box.add_widget(Label(text=f"投入: {stats['total_in']:.0f}元  中奖: {stats['total_win']:.0f}元  {net_str}",
                               size_hint_y=None, height='24dp', font_size='11sp',
                               color=ACCENT if stats['net'] >= 0 else RED))
+        btn = Button(text="一键对奖（按最新开奖核对兑奖）", size_hint_y=None, height='40dp',
+                      background_color=BLUE, color=(1, 1, 1, 1), font_size='13sp')
+        btn.bind(on_press=lambda *a: self._do_check())
+        box.add_widget(btn)
         self.content.add_widget(box)
+
+    def _do_check(self):
+        rows = self.dm.get_data(100000)
+        recs, stats = self.dm.check_records(rows)
+        win = sum(1 for r in recs if r.get('win_grade', 0) > 0)
+        self._popup("对奖完成", f"共 {stats['count']} 注记录，\n已兑奖 {stats['total_win']:.0f} 元，\n中奖 {win} 注，待开奖 {stats['pending']} 注。")
 
     def _show_add_form(self):
         box = BoxLayout(orientation='vertical', size_hint_y=None, height='240dp', padding=5, spacing=5)
