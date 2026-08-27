@@ -1,0 +1,60 @@
+name: Build Android APK
+
+on:
+  push:
+    paths: ['main.py', 'buildozer.spec']
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git python3-pip python3-setuptools \
+            autoconf automake gdb lld \
+            libtool libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
+            pkg-config zlib1g-dev libjpeg-dev wget unzip zip \
+            openjdk-17-jdk
+
+          pip3 install --upgrade pip
+          pip3 install cython==3.0.10 buildozer==1.5.0
+
+      - name: Cache buildozer build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.buildozer
+          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-
+
+      - name: Build APK with Buildozer
+        run: |
+          # Accept Android SDK licenses
+          mkdir -p ~/.android
+          echo "y" | sdkmanager --sdk_root=/opt/android-sdk --licenses 2>/dev/null || true
+
+          # Run buildozer
+          cd "$(dirname "$0")" || cd .
+          buildozer android debug 2>&1 | tail -100
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssq-apk
+          path: bin/*.apk
+          if-no-files-found: error
