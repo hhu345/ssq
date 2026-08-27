@@ -26,16 +26,35 @@ jobs:
 
       - name: Build APK with buildozer
         run: |
-          # Ensure we're in the right directory (container may start elsewhere)
           cd $GITHUB_WORKSPACE
-          
-          # Set environment variables
-          export ANDROID_HOME=/opt/android-sdk
-          export ANDROID_SDK_ROOT=/opt/android-sdk
-          export PATH=$PATH:/opt/android-sdk/tools:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/33.0.0
           export BUILDOZER_ALLOW_ROOT=1
           
-          # Build debug APK (yes | feeds 'y' to every sdkmanager license prompt)
+          # Stage 1: let buildozer download its own SDK (will fail on missing platform, that's OK).
+          yes | buildozer android debug 2>&1 | tee /tmp/stage1.log || true
+          
+          # Locate the SDK buildozer downloaded.
+          SDK_DIR=""
+          for d in "$PWD/.buildozer/android/platform/android-sdk" /github/home/.buildozer/android/platform/android-sdk; do
+            if [ -f "$d/tools/bin/sdkmanager" ]; then SDK_DIR="$d"; break; fi
+          done
+          echo "=== SDK_DIR=$SDK_DIR ==="
+          
+          if [ -n "$SDK_DIR" ]; then
+            SM="$SDK_DIR/tools/bin/sdkmanager"
+            echo "--- Installing API 33 platform + build-tools + platform-tools ---"
+            yes | "$SM" --sdk_root="$SDK_DIR" "platforms;android-33" "build-tools;33.0.0" "platform-tools" || true
+            yes | "$SM" --sdk_root="$SDK_DIR" --licenses || true
+            # Point buildozer at this SDK for the real build.
+            export ANDROID_HOME="$SDK_DIR"
+            export ANDROID_SDK_ROOT="$SDK_DIR"
+            export ANDROIDSDK="$SDK_DIR"
+            export ANDROIDAPI=33
+            export ANDROIDNDKAPI=24
+            export PATH="$PATH:$SDK_DIR/platform-tools:$SDK_DIR/build-tools/33.0.0"
+          fi
+          
+          # Stage 2: final build.
+          echo "=== Final build ==="
           yes | buildozer android debug
 
       - name: List output
