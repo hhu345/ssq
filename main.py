@@ -37,7 +37,7 @@ from kivy.graphics import Color, Rectangle, RoundedRectangle
 from kivy.utils import get_color_from_hex
 from kivy.core.window import Window
 
-Window.clearcolor = (0.96, 0.96, 0.96, 1)
+Window.clearcolor = (0.961, 0.965, 0.973, 1)
 
 # ============================================================
 # 中文字体注册 (Kivy 默认字体不含中文，需注册 simhei 避免方块)
@@ -91,14 +91,15 @@ PRIZE_AMOUNT = {1: 5000000, 2: 150000, 3: 3000, 4: 200, 5: 10, 6: 5}
 
 DATA_URL = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice"
 
-RED = get_color_from_hex("#E74C3C")
-RED_LIGHT = get_color_from_hex("#FADBD8")
-BLUE = get_color_from_hex("#3498DB")
-BLUE_LIGHT = get_color_from_hex("#D6EAF8")
-ACCENT = get_color_from_hex("#2ECC71")
-DARK = get_color_from_hex("#2C3E50")
-GRAY = get_color_from_hex("#95A5A6")
+RED = get_color_from_hex("#E53935")
+RED_LIGHT = get_color_from_hex("#EF9A9A")
+BLUE = get_color_from_hex("#1565C0")
+BLUE_LIGHT = get_color_from_hex("#90CAF9")
+ACCENT = get_color_from_hex("#1A73E8")
+DARK = get_color_from_hex("#222222")
+GRAY = get_color_from_hex("#888888")
 WHITE = get_color_from_hex("#FFFFFF")
+BG = get_color_from_hex("#F5F6F8")
 
 # ============================================================
 # 工具函数
@@ -933,20 +934,21 @@ class GenerateScreen(Screen):
             def _show():
                 self._last_tickets = result
                 self.result_box.clear_widgets()
-                self.result_box.height = len(result) * 44 + 60
-                self.result_box.add_widget(_title_row(f"生成 {len(result)} 注"))
+                self.result_box.height = len(result) * 46 + 90
+                self.result_box.add_widget(_title_row(f"生成 {len(result)} 注（下方已尽量完整展示，可上下滚动）"))
                 for i, t in enumerate(result):
-                    line = BoxLayout(size_hint_y=None, height='40dp', spacing=5)
-                    line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=0.08, height='32dp', font_size='11sp', color=DARK))
-                    for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED))
-                    line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE))
-                    save_btn = Button(text="存", size_hint_x=0.08, height='32dp', font_size='13sp',
-                                      background_color=ACCENT, color=(1, 1, 1, 1))
+                    line = BoxLayout(size_hint_y=None, height='40dp', spacing=4)
+                    line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=None, width='36dp', size_hint_y=None,
+                                          height='34dp', font_size='12sp', color=DARK))
+                    for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED, '30dp'))
+                    line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE, '30dp'))
+                    save_btn = Button(text="存", size_hint_x=None, width='44dp', size_hint_y=None,
+                                      height='32dp', font_size='13sp', background_color=ACCENT, color=(1, 1, 1, 1))
                     save_btn.bind(on_press=lambda *a, tt=t: self._save_ticket(tt))
                     line.add_widget(save_btn)
                     self.result_box.add_widget(line)
                 if result:
-                    all_btn = Button(text=f"一键存入全部 {len(result)} 注到购彩记录", size_hint_y=None, height='44dp',
+                    all_btn = Button(text=f"一键存入全部 {len(result)} 注到购彩记录", size_hint_y=None, height='46dp',
                                      background_color=BLUE, color=(1, 1, 1, 1), font_size='14sp')
                     all_btn.bind(on_press=self._save_all)
                     self.result_box.add_widget(all_btn)
@@ -1110,6 +1112,10 @@ class RecordsScreen(Screen):
         self.scroll.add_widget(self.content)
         self.root.add_widget(self.scroll)
         self.add_widget(self.root)
+        self.refresh()
+
+    def on_enter(self, *a):
+        # 每次切到记录页都刷新，保证实时更新
         self.refresh()
 
     def refresh(self):
