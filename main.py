@@ -615,16 +615,16 @@ class OverviewScreen(Screen):
         bhot = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bfreq[i])[:5]
         bcold = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bomit[i])[:5]
 
-        hbox = GridLayout(cols=10, size_hint_y=None, height='48dp', spacing=3)
-        for x in hot: hbox.add_widget(_ball_label(f"{x:02d}", 1, RED))
+        hbox = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
+        for x in hot: hbox.add_widget(_ball_label(f"{x:02d}", 1, RED, '36dp'))
         self.content.add_widget(hbox)
 
-        hbox2 = GridLayout(cols=10, size_hint_y=None, height='48dp', spacing=3)
-        for x in cold: hbox2.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1)))
+        hbox2 = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
+        for x in cold: hbox2.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1), '36dp'))
         self.content.add_widget(hbox2)
 
         bline = GridLayout(cols=8, size_hint_y=None, height='48dp', spacing=3)
-        for x in bhot: bline.add_widget(_ball_label(f"{x:02d}", 1, BLUE))
+        for x in bhot: bline.add_widget(_ball_label(f"{x:02d}", 1, BLUE, '30dp'))
         self.content.add_widget(bline)
 
         self.content.add_widget(_title_row("图表"))
@@ -940,8 +940,8 @@ class GenerateScreen(Screen):
                     line = BoxLayout(size_hint_y=None, height='40dp', spacing=4)
                     line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=None, width='36dp', size_hint_y=None,
                                           height='34dp', font_size='12sp', color=DARK))
-                    for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED, '30dp'))
-                    line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE, '30dp'))
+                    for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED, '28dp'))
+                    line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE, '28dp'))
                     save_btn = Button(text="存", size_hint_x=None, width='44dp', size_hint_y=None,
                                       height='32dp', font_size='13sp', background_color=ACCENT, color=(1, 1, 1, 1))
                     save_btn.bind(on_press=lambda *a, tt=t: self._save_ticket(tt))
