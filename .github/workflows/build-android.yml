@@ -35,8 +35,8 @@ jobs:
           export PATH=$PATH:/opt/android-sdk/tools:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/33.0.0
           export BUILDOZER_ALLOW_ROOT=1
           
-          # Build debug APK (pipe 'y' to auto-confirm the root prompt)
-          printf 'y\n' | buildozer android debug
+          # Build debug APK (yes | feeds 'y' to every sdkmanager license prompt)
+          yes | buildozer android debug
 
       - name: List output
         if: always()
