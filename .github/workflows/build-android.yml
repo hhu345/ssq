@@ -33,6 +33,7 @@ jobs:
           export ANDROID_HOME=/opt/android-sdk
           export ANDROID_SDK_ROOT=/opt/android-sdk
           export PATH=$PATH:/opt/android-sdk/tools:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/33.0.0
+          export BUILDOZER_ALLOW_ROOT=1
           
           # Build debug APK
           buildozer android debug
