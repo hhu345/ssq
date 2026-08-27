@@ -480,8 +480,8 @@ def _ball_label(text, color, bg):
     with lbl.canvas.before:
         Color(*bg)
         lbl.bg_rect = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[24])
-    lbl.bind(pos=lambda *a: setattr(lbl.bg_rect, 'pos', a[1].pos),
-             size=lambda *a: setattr(lbl.bg_rect, 'size', a[1].size))
+    lbl.bind(pos=lambda *a: setattr(lbl.bg_rect, 'pos', a[1]),
+             size=lambda *a: setattr(lbl.bg_rect, 'size', a[1]))
     return lbl
 
 
@@ -494,8 +494,8 @@ def _section_box(child, **kw):
     with outer.canvas.before:
         Color(1, 1, 1, 1)
         outer.bg = RoundedRectangle(pos=outer.pos, size=outer.size, radius=[8])
-    outer.bind(pos=lambda *a: setattr(outer.bg, 'pos', a[1].pos),
-               size=lambda *a: setattr(outer.bg, 'size', a[1].size))
+    outer.bind(pos=lambda *a: setattr(outer.bg, 'pos', a[1]),
+               size=lambda *a: setattr(outer.bg, 'size', a[1]))
     outer.add_widget(child)
     return outer
 
@@ -663,8 +663,8 @@ class AnalysisScreen(Screen):
             with lbl.canvas.before:
                 Color(r / 255, g / 255, b, 1)
                 lbl.bg_r = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a: [setattr(x, 'pos', a[1].pos) for x in [a[1].bg_r]],
-                     size=lambda *a: [setattr(x, 'size', a[1].size) for x in [a[1].bg_r]])
+            lbl.bind(pos=lambda *a: setattr(lbl.bg_r, 'pos', a[1]),
+                     size=lambda *a: setattr(lbl.bg_r, 'size', a[1]))
             score_grid.add_widget(lbl)
         self.content.add_widget(score_grid)
 
@@ -680,8 +680,8 @@ class AnalysisScreen(Screen):
             with lbl.canvas.before:
                 Color(0.2, g / 255, 0.9, 1)
                 lbl.bg_b = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a: [setattr(x, 'pos', a[1].pos) for x in [a[1].bg_b]],
-                     size=lambda *a: [setattr(x, 'size', a[1].size) for x in [a[1].bg_b]])
+            lbl.bind(pos=lambda *a: setattr(lbl.bg_b, 'pos', a[1]),
+                     size=lambda *a: setattr(lbl.bg_b, 'size', a[1]))
             bline.add_widget(lbl)
         self.content.add_widget(_section_box(bline))
 
@@ -1077,8 +1077,8 @@ class RecordsScreen(Screen):
             with card.canvas.before:
                 Color(1, 1, 1, 1)
                 card.bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[6])
-            card.bind(pos=lambda *a: setattr(a[1].bg, 'pos', a[1].pos),
-                      size=lambda *a: setattr(a[1].bg, 'size', a[1].size))
+            card.bind(pos=lambda *a: setattr(card.bg, 'pos', a[1]),
+                      size=lambda *a: setattr(card.bg, 'size', a[1]))
             top = BoxLayout(size_hint_y=None, height='26dp', spacing=5)
             top.add_widget(Label(text=f"{rec.get('code', '?')}  {rec.get('date', '')}",
                                   size_hint_x=0.35, height='24dp', font_size='10sp'))
