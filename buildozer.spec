@@ -16,6 +16,7 @@ osx.kivy_version = 2.3.0
 
 fullscreen = 0
 permissions = INTERNET
+android.permissions = INTERNET
 android.api = 33
 android.minapi = 24
 android.ndk = 28c

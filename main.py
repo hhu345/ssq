@@ -87,7 +87,9 @@ def _to_int(v):
 
 
 def norm(d):
-    mx = max(d.values()) if d else 1
+    mx = max(d.values()) if d else 0
+    if mx <= 0:
+        return {k: 0.0 for k in d}
     return {k: v / mx for k, v in d.items()}
 
 
@@ -358,7 +360,10 @@ class KivyBarChart(Widget):
 
     def _draw(self):
         w = self.width
-        h = self.height
+        try:
+            h = float(self.height)
+        except Exception:
+            h = 200.0
         if w <= 1 or h <= 1:
             return
         from kivy.graphics import Color, Rectangle, RoundedRectangle, Line
@@ -366,7 +371,7 @@ class KivyBarChart(Widget):
         # 标题
         if self.chart_title:
             from kivy.core.text import Label as CoreLabel
-            c = CoreLabel(text=self.chart_title, font_size='14sp', bold=True)
+            c = CoreLabel(text=self.chart_title, font_size=14, bold=True)
             c.refresh()
             tex = c.texture
             with self.canvas:
