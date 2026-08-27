@@ -20,41 +20,60 @@ jobs:
           path: |
             .buildozer
             ~/.gradle
-          key: buildozer-v4-${{ hashFiles('buildozer.spec') }}
+          key: buildozer-v5-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-v4-
+            buildozer-v5-
+
+      - name: Install Android SDK platform + accept licenses
+        run: |
+          set -e
+          cd $GITHUB_WORKSPACE
+          export BUILDOZER_ALLOW_ROOT=1
+
+          # The system SDK is at /opt/android-sdk; install API 33 platform there
+          export ANDROID_HOME=/opt/android-sdk
+          export ANDROID_SDK_ROOT=/opt/android-sdk
+
+          # Accept SDK licenses first
+          mkdir -p $ANDROID_HOME/licenses
+          echo -e "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n8483be6f7b86d2495b59f6e0787bee77c10fc3a6\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+
+          # Install the required SDK platform + build-tools + platform-tools
+          if [ -f /opt/android-sdk/cmdline-tools/bin/sdkmanager ]; then
+            SDKMANAGER=/opt/android-sdk/cmdline-tools/bin/sdkmanager
+          elif [ -f /opt/android-sdk/tools/bin/sdkmanager ]; then
+            SDKMANAGER=/opt/android-sdk/tools/bin/sdkmanager
+          else
+            SDKMANAGER=sdkmanager
+          fi
+          echo "--- Installing API 33 platform + build-tools ---"
+          yes | "$SDKMANAGER" --sdk_root=$ANDROID_HOME "platforms;android-33" "build-tools;33.0.0" "platform-tools"
+          yes | "$SDKMANAGER" --sdk_root=$ANDROID_HOME --licenses
+
+          # Verify installation
+          echo "--- System SDK platforms ---"
+          ls -la $ANDROID_HOME/platforms/
+          echo "--- System SDK build-tools ---"
+          ls $ANDROID_HOME/build-tools/
+          echo "--- System SDK NDK ---"
+          ls /opt/android-ndk/ 2>/dev/null || echo "NDK not found at /opt/android-ndk"
 
       - name: Build APK with buildozer
         run: |
+          set -e
           cd $GITHUB_WORKSPACE
+
+          # Point ALL Android env vars to the system SDK/NDK (pre-installed in kivy/buildozer container)
+          export ANDROID_HOME=/opt/android-sdk
+          export ANDROID_SDK_ROOT=/opt/android-sdk
+          export ANDROIDSDK=/opt/android-sdk
+          export ANDROIDNDK=/opt/android-ndk
+          export ANDROIDAPI=33
+          export ANDROIDNDKAPI=24
+          export PATH=$PATH:/opt/android-sdk/cmdline-tools/bin:/opt/android-sdk/tools:/opt/android-sdk/tools/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/build-tools/33.0.0
           export BUILDOZER_ALLOW_ROOT=1
-          
-          # Stage 1: let buildozer download its own SDK (will fail on missing platform, that's OK).
-          yes | buildozer android debug 2>&1 | tee /tmp/stage1.log || true
-          
-          # Locate the SDK buildozer downloaded.
-          SDK_DIR=""
-          for d in "$PWD/.buildozer/android/platform/android-sdk" /github/home/.buildozer/android/platform/android-sdk; do
-            if [ -f "$d/tools/bin/sdkmanager" ]; then SDK_DIR="$d"; break; fi
-          done
-          echo "=== SDK_DIR=$SDK_DIR ==="
-          
-          if [ -n "$SDK_DIR" ]; then
-            SM="$SDK_DIR/tools/bin/sdkmanager"
-            echo "--- Installing API 33 platform + build-tools + platform-tools ---"
-            yes | "$SM" --sdk_root="$SDK_DIR" "platforms;android-33" "build-tools;33.0.0" "platform-tools" || true
-            yes | "$SM" --sdk_root="$SDK_DIR" --licenses || true
-            # Point buildozer at this SDK for the real build.
-            export ANDROID_HOME="$SDK_DIR"
-            export ANDROID_SDK_ROOT="$SDK_DIR"
-            export ANDROIDSDK="$SDK_DIR"
-            export ANDROIDAPI=33
-            export ANDROIDNDKAPI=24
-            export PATH="$PATH:$SDK_DIR/platform-tools:$SDK_DIR/build-tools/33.0.0"
-          fi
-          
-          # Stage 2: final build.
-          echo "=== Final build ==="
+
+          echo "--- Building APK with ANDROIDSDK=$ANDROIDSDK ANDROIDNDK=$ANDROIDNDK ---"
           yes | buildozer android debug
 
       - name: List output
