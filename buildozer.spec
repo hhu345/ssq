@@ -21,10 +21,11 @@ android.minapi = 24
 android.ndk = 25b
 android.sdk = 33
 android.archs = arm64-v8a,armeabi-v7a
+android.accept_sdk_licenses = True
 log_level = 2
 warn_on_root = 0
 
 [buildozer]
 arch = arm64-v8a,armeabi-v7a
 osx.rootdir = .
-android.accept_sdk licenses = true
+

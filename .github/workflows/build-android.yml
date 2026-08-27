@@ -47,13 +47,16 @@ jobs:
           export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
           export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
           
-          # Accept Android SDK licenses properly
-          yes | sdkmanager --licenses 2>&1 || true
+          # Pre-accept Android SDK licenses by creating license files
+          mkdir -p $HOME/.android/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $HOME/.android/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $HOME/.android/licenses/android-sdk-license
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $HOME/.android/licenses/android-sdk-preview-license
           
           # Install required SDK components
-          sdkmanager "platform-tools" "build-tools;33.0.0" "platforms;android-33" 2>&1 || true
+          sdkmanager "platform-tools" "build-tools;33.0.0" "platforms;android-33" || true
           
-          # Run buildozer (spec file is in repo root)
+          # Run buildozer
           buildozer android debug 2>&1 | tail -150
 
       - name: Upload APK
