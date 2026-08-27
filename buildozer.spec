@@ -1,6 +1,6 @@
 [app]
 
-title = 鍙岃壊鐞冮€夊彿
+title = 双色球选号
 package.name = ssq
 package.domain = org.lottery
 source.dir = .

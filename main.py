@@ -40,6 +40,34 @@ from kivy.core.window import Window
 Window.clearcolor = (0.96, 0.96, 0.96, 1)
 
 # ============================================================
+# 中文字体注册 (Kivy 默认字体不含中文，需注册 simhei 避免方块)
+# ============================================================
+from kivy.core.text import LabelBase, DEFAULT_FONT
+from kivy.utils import platform as _kivy_platform
+
+def _register_cjk_font():
+    """注册中文字体，让界面中文正常显示。"""
+    candidates = []
+    if _kivy_platform == 'android':
+        candidates = [
+            '/system/fonts/DroidSansFallback.ttf',
+            '/system/fonts/NotoSansCJK-Regular.ttc',
+            'simhei.ttf',
+        ]
+    else:
+        candidates = ['simhei.ttf', 'msyh.ttc', 'C:/Windows/Fonts/simhei.ttf']
+    for path in candidates:
+        if path and os.path.exists(path):
+            try:
+                LabelBase.register(DEFAULT_FONT, path)
+                return path
+            except Exception:
+                continue
+    return None
+
+_font_registered = _register_cjk_font()
+
+# ============================================================
 # 核心常量
 # ============================================================
 RED_COUNT = 33
