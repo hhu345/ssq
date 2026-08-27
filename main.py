@@ -1141,12 +1141,12 @@ class SSQApp(App):
     title = "双色球选号"
 
     def build(self):
-        # data dir
-        if sys.platform == 'android':
-            from android import storage
-            data_dir = storage.get_app_dir()
-        else:
-            data_dir = str(Path(__file__).parent / ".ssq_data")
+        # data dir: use Kivy's user_data_dir (cross-platform, works on Android/desktop)
+        data_dir = self.user_data_dir
+        try:
+            Path(data_dir).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
         self.dm = DataManager(data_dir)
 
