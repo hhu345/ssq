@@ -1128,7 +1128,7 @@ class TabBar(GridLayout):
         tabs = [("概览", sm), ("分析", sm), ("选号", sm), ("回测", sm), ("记录", sm)]
         for i, (name, _) in enumerate(tabs):
             btn = Button(text=name, font_size='14sp', background_color=get_color_from_hex("#F0F0F0"),
-                          color=DARK, border_radius=0)
+                          color=DARK)
             btn.bind(on_press=lambda *a, idx=i: self._switch(idx))
             self.tab_labels.append(btn)
             self.add_widget(btn)
