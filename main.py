@@ -485,7 +485,7 @@ def _section_box(child, **kw):
     box = BoxLayout(orientation='vertical', size_hint_y=None, **kw)
     box.bind(minimum_height=box.setter('height'))
     outer = BoxLayout(orientation='vertical', size_hint_y=None, height=child.height + 20, padding=10,
-                      spacing=5, background_color=(0.96, 0.96, 0.96, 1))
+                      spacing=5)
     with outer.canvas.before:
         Color(1, 1, 1, 1)
         outer.bg = RoundedRectangle(pos=outer.pos, size=outer.size, radius=[8])
@@ -1068,7 +1068,7 @@ class RecordsScreen(Screen):
         self.content.add_widget(_title_row(f"购彩记录 ({len(recs)} 条)"))
         for rec in reversed(recs[-50:]):
             card = BoxLayout(orientation='vertical', size_hint_y=None, height='56dp',
-                              padding=5, spacing=2, background_color=(1, 1, 1, 1))
+                              padding=5, spacing=2)
             with card.canvas.before:
                 Color(1, 1, 1, 1)
                 card.bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[6])
