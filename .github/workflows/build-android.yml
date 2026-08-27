@@ -1,16 +1,16 @@
-name: Build Android APK
+name: Build APK
 
 on:
-  push:
-    paths: ['main.py', 'buildozer.spec']
   workflow_dispatch:
+  push:
+    branches: [main]
 
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -18,53 +18,54 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git python3-pip python3-setuptools \
+          sudo apt-get install -y build-essential git python3-pip python3-setuptools \
             autoconf automake gdb lld \
             libtool libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev \
-            pkg-config zlib1g-dev libjpeg-dev wget unzip zip \
-            openjdk-17-jdk
+            pkg-config zlib1g-dev libjpeg-dev wget unzip zip openjdk-17-jdk
 
           pip3 install --upgrade pip
           pip3 install cython==3.0.10 buildozer==1.5.0
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses & install SDK packages
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/bin/sdkmanager --licenses 2>/dev/null || true
+          $ANDROID_HOME/cmdline-tools/bin/sdkmanager \
+            "platform-tools" \
+            "build-tools;31.0.0" \
+            "platforms;android-31" \
+            "ndk;25.1.8937393" 2>&1 | tail -5
+
       - name: Cache buildozer build
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.buildozer
-          key: buildozer-${{ hashFiles('buildozer.spec') }}
+          path: ~/.buildozer
+          key: buildozer-apk-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-
+            buildozer-apk-
 
-      - name: Build APK with Buildozer
+      - name: Build APK
         run: |
-          # Set up environment
-          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-          export ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk
-          export PATH=$ANDROID_HOME/tools:$ANDROID_HOME/platform-tools:$PATH
-          
-          # Pre-accept Android SDK licenses by creating license files
-          mkdir -p $HOME/.android/licenses
-          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $HOME/.android/licenses/android-sdk-license
-          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $HOME/.android/licenses/android-sdk-license
-          echo "84831b9409646a918e30573bab4c9c91346d8abd" > $HOME/.android/licenses/android-sdk-preview-license
-          
-          # Install required SDK components using buildozer's sdkmanager
-          export SDKMANAGER=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
-          if [ -f "$SDKMANAGER" ]; then
-            yes | $SDKMANAGER "platform-tools" "build-tools;33.0.0" "platforms;android-33" || true
-          fi
-          
-          # Run buildozer with auto-accept flag
-          yes | buildozer android debug 2>&1 | tail -200
+          export JAVA_HOME=$JAVA_HOME_17_X64
+          export ANDROID_HOME=$ANDROID_HOME
+          yes | buildozer android debug 2>&1 | tail -300
+        env:
+          JAVA_HOME: /usr/lib/jvm/temurin-17-jdk-amd64
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ssq-apk
           path: bin/*.apk
-          if-no-files-found: error
+          if-no-files-found: warn
