@@ -18,14 +18,13 @@ fullscreen = 0
 permissions = INTERNET
 android.api = 33
 android.minapi = 24
-android.ndk = 25.1.8937393
-android.sdk = 33
-android.archs = arm64-v8a,armeabi-v7a
+android.ndk = 28c
+android.archs = armeabi-v7a
 android.accept_sdk_licenses = True
 log_level = 2
 warn_on_root = 0
 
 [buildozer]
-arch = arm64-v8a,armeabi-v7a
+arch = armeabi-v7a
 osx.rootdir = .
 
