@@ -663,8 +663,8 @@ class AnalysisScreen(Screen):
             with lbl.canvas.before:
                 Color(r / 255, g / 255, b, 1)
                 lbl.bg_r = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a: setattr(lbl.bg_r, 'pos', a[1]),
-                     size=lambda *a: setattr(lbl.bg_r, 'size', a[1]))
+            lbl.bind(pos=lambda *a, l=lbl: setattr(l.bg_r, 'pos', a[1]),
+                     size=lambda *a, l=lbl: setattr(l.bg_r, 'size', a[1]))
             score_grid.add_widget(lbl)
         self.content.add_widget(score_grid)
 
@@ -680,8 +680,8 @@ class AnalysisScreen(Screen):
             with lbl.canvas.before:
                 Color(0.2, g / 255, 0.9, 1)
                 lbl.bg_b = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a: setattr(lbl.bg_b, 'pos', a[1]),
-                     size=lambda *a: setattr(lbl.bg_b, 'size', a[1]))
+            lbl.bind(pos=lambda *a, l=lbl: setattr(l.bg_b, 'pos', a[1]),
+                     size=lambda *a, l=lbl: setattr(l.bg_b, 'size', a[1]))
             bline.add_widget(lbl)
         self.content.add_widget(_section_box(bline))
 
