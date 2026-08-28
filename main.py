@@ -387,7 +387,7 @@ class KivyBarChart(Widget):
         self.label_map = labels or {}
         self.backtest = backtest
         self.size_hint_y = None
-        self.height = '200dp'
+        self.height = '240dp'
 
     def on_size(self, *a):
         self.canvas.clear()
@@ -403,7 +403,7 @@ class KivyBarChart(Widget):
             return
         from kivy.graphics import Color, Rectangle, RoundedRectangle, Line
         chart_w = w        # 占满宽度
-        chart_h = h - 26   # 底部留 26 画柱
+        chart_h = h - 32   # 底部留 32 画轴标签
         if chart_h < 10:
             chart_h = 10
 
@@ -456,12 +456,12 @@ class KivyBarChart(Widget):
             with self.canvas:
                 Color(*self.bar_color)
                 RoundedRectangle(pos=(x, base_y), size=(bw, max(2, bh)), radius=[2])
-                # 轴标签（柱下方小字）
-            c = CoreLabel(text=lab, font_size=8, color=(0.5, 0.5, 0.5, 1))
+            # 轴标签（柱下方，加大字号防重叠）
+            c = CoreLabel(text=lab, font_size=11, color=(0.35, 0.35, 0.35, 1))
             c.refresh(); tex = c.texture
             with self.canvas:
-                Color(0.5, 0.5, 0.5, 1)
-                Rectangle(texture=tex, pos=(x + bw / 2 - tex.width / 2, base_y - tex.height * 1.2),
+                Color(0.35, 0.35, 0.35, 1)
+                Rectangle(texture=tex, pos=(x + bw / 2 - tex.width / 2, base_y - tex.height * 1.1),
                           size=(tex.width, tex.height))
 
     def _draw_backtest(self, chart_w, chart_h, top_margin, base_y=4):
@@ -710,7 +710,7 @@ class AnalysisScreen(Screen):
         self.content.add_widget(Label(text=f"权重: 频率{W_FREQ} + 遗漏{W_OMIT} + 尾数{W_TAIL} + 区间{W_ZONE}",
                                        size_hint_y=None, height='28dp', color=GRAY, font_size='11sp'))
 
-        score_grid = GridLayout(cols=8, size_hint_y=None, height='120dp', spacing=3)
+        score_grid = GridLayout(cols=8, size_hint_y=None, height='250dp', spacing=3)
         for i in range(1, RED_COUNT + 1):
             v = red_sc[i]
             mx = max(red_sc.values())
@@ -718,8 +718,8 @@ class AnalysisScreen(Screen):
             r = int(ratio * 231)
             g = int((1 - ratio) * 52)
             b = 0
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='10sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('52dp', '42dp'), halign='center', valign='middle')
+            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='12sp', color=(1, 1, 1, 1),
+                        size_hint=(None, None), size=('54dp', '46dp'), halign='center', valign='middle')
             with lbl.canvas.before:
                 Color(r / 255, g / 255, b, 1)
                 lbl.bg_r = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
@@ -729,21 +729,21 @@ class AnalysisScreen(Screen):
         self.content.add_widget(score_grid)
 
         self.content.add_widget(_title_row("蓝球评分"))
-        bline = BoxLayout(size_hint_y=None, height='44dp', spacing=3)
+        bline = GridLayout(cols=8, size_hint_y=None, height='110dp', spacing=3)
         for i in range(1, BLUE_COUNT + 1):
             v = bsc[i]
             mx = max(bsc.values())
             ratio = v / mx if mx else 0
             g = int((1 - ratio) * 150)
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='10sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('42dp', '36dp'), halign='center', valign='middle')
+            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='12sp', color=(1, 1, 1, 1),
+                        size_hint=(None, None), size=('54dp', '46dp'), halign='center', valign='middle')
             with lbl.canvas.before:
                 Color(0.2, g / 255, 0.9, 1)
                 lbl.bg_b = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
             lbl.bind(pos=lambda *a, l=lbl: setattr(l.bg_b, 'pos', a[1]),
                      size=lambda *a, l=lbl: setattr(l.bg_b, 'size', a[1]))
             bline.add_widget(lbl)
-        self.content.add_widget(_section_box(bline))
+        self.content.add_widget(bline)
 
         self.content.add_widget(_title_row("图表"))
         charts = []
@@ -800,22 +800,22 @@ class GenerateScreen(Screen):
         self.content.add_widget(_hint("四项权重建议 0.3/0.35/0.2/0.15（合计≈1），滑动可调，越接近 1 越均衡。"))
         w_grid = GridLayout(cols=2, size_hint_y=None, height='160dp', spacing=5)
         self.w_freq_s = Slider(min=0, max=1, value=W_FREQ, size_hint_x=0.7)
-        self.w_freq_l = Label(text=f"频率: {W_FREQ}", size_hint_x=0.3, height='30dp')
+        self.w_freq_l = Label(text=f"频率: {W_FREQ}", size_hint_x=0.3, height='30dp', color=DARK)
         self.w_freq_s.bind(value=lambda *a: setattr(self.w_freq_l, 'text', f"频率: {a[1]:.2f}"))
         w_grid.add_widget(self.w_freq_l); w_grid.add_widget(self.w_freq_s)
 
         self.w_omit_s = Slider(min=0, max=1, value=W_OMIT, size_hint_x=0.7)
-        self.w_omit_l = Label(text=f"遗漏: {W_OMIT}", size_hint_x=0.3, height='30dp')
+        self.w_omit_l = Label(text=f"遗漏: {W_OMIT}", size_hint_x=0.3, height='30dp', color=DARK)
         self.w_omit_s.bind(value=lambda *a: setattr(self.w_omit_l, 'text', f"遗漏: {a[1]:.2f}"))
         w_grid.add_widget(self.w_omit_l); w_grid.add_widget(self.w_omit_s)
 
         self.w_tail_s = Slider(min=0, max=1, value=W_TAIL, size_hint_x=0.7)
-        self.w_tail_l = Label(text=f"尾数: {W_TAIL}", size_hint_x=0.3, height='30dp')
+        self.w_tail_l = Label(text=f"尾数: {W_TAIL}", size_hint_x=0.3, height='30dp', color=DARK)
         self.w_tail_s.bind(value=lambda *a: setattr(self.w_tail_l, 'text', f"尾数: {a[1]:.2f}"))
         w_grid.add_widget(self.w_tail_l); w_grid.add_widget(self.w_tail_s)
 
         self.w_zone_s = Slider(min=0, max=1, value=W_ZONE, size_hint_x=0.7)
-        self.w_zone_l = Label(text=f"区间: {W_ZONE}", size_hint_x=0.3, height='30dp')
+        self.w_zone_l = Label(text=f"区间: {W_ZONE}", size_hint_x=0.3, height='30dp', color=DARK)
         self.w_zone_s.bind(value=lambda *a: setattr(self.w_zone_l, 'text', f"区间: {a[1]:.2f}"))
         w_grid.add_widget(self.w_zone_l); w_grid.add_widget(self.w_zone_s)
         self.content.add_widget(w_grid)
@@ -844,8 +844,8 @@ class GenerateScreen(Screen):
                                      size_hint_x=0.3, height='40dp')
         self.n_spin = Spinner(text="100", values=[str(i) for i in range(50, 1001, 50)],
                                size_hint_x=0.3, height='40dp')
-        self.content.add_widget(_row(Label(text="注数:", height='40dp'), self.tickets_spin,
-                                      Label(text="期数:", height='40dp'), self.n_spin))
+        self.content.add_widget(_row(Label(text="注数:", height='40dp', color=DARK), self.tickets_spin,
+                                      Label(text="期数:", height='40dp', color=DARK), self.n_spin))
 
         self.gen_btn = Button(text="开始选号", size_hint_y=None, height='50dp',
                                background_color=ACCENT, color=(1, 1, 1, 1), font_size='18sp')
