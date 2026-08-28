@@ -404,6 +404,9 @@ class KivyBarChart(Widget):
             h = float(self.height)
         except Exception:
             h = 200.0
+        # 限制绘制基准高度，防止柱子异常高覆盖下方内容
+        if h > 280:
+            h = 280
         if w <= 1 or h <= 5:
             return
         from kivy.graphics import Color, Rectangle, RoundedRectangle, Line
@@ -502,27 +505,96 @@ class KivyBarChart(Widget):
                           size=(tex.width, tex.height))
 
 
+def _hbar_row(lab, ratio, color, val_text=''):
+    """单行水平条形：标签 + 彩色条 + 数值（条宽显式 dp，比例确定）"""
+    row = BoxLayout(orientation='horizontal', size_hint_y=None, height='20dp', spacing=4)
+    row.add_widget(Label(text=str(lab), size_hint_x=None, width='36dp',
+                          size_hint_y=None, height='18dp', font_size='10sp', color=DARK))
+    bar_w = int(10 + 240 * max(0.0, min(1.0, ratio)))
+    bar = Label(size_hint_x=None, width=f'{bar_w}dp', size_hint_y=None, height='16dp')
+    with bar.canvas.before:
+        Color(*color)
+        bar.bg = RoundedRectangle(pos=bar.pos, size=bar.size, radius=[3])
+    bar.bind(pos=lambda *a, b=bar: setattr(b.bg, 'pos', a[1]),
+             size=lambda *a, b=bar: setattr(b.bg, 'size', a[1]))
+    row.add_widget(bar)
+    if val_text:
+        row.add_widget(Label(text=val_text, size_hint_x=None, width='40dp',
+                              size_hint_y=None, height='18dp', font_size='9sp', color=GRAY))
+    return row
+
+
+def _bar_chart(data, title='', color=None, labels=None):
+    """基于 Label+背景色 的水平条形图，按比例自动占满屏宽"""
+    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+    box.bind(minimum_height=box.setter('height'))
+    if title:
+        box.add_widget(_title_row(title))
+    items = sorted(data.keys())
+    vals = [data[k] for k in items]
+    vmax = max(vals) if vals else 1
+    if vmax <= 0:
+        vmax = 1
+    c = color if color else (0.20, 0.60, 0.86, 1)
+    for k in items:
+        lab = labels.get(str(k), str(k)) if labels else str(k)
+        v = data[k]
+        vt = ("%.2f" % v) if isinstance(v, float) else str(v)
+        box.add_widget(_hbar_row(lab, v / vmax, c, vt))
+    return box
+
+
 def chart_freq(freq):
-    return KivyBarChart(freq, "红球出现频率")
+    return _bar_chart(freq, "红球出现频率", get_color_from_hex("#C62828"))
 
 def chart_omit(omit):
-    return KivyBarChart(omit, "红球遗漏值", color=(0.93, 0.30, 0.24, 1))
+    return _bar_chart(omit, "红球遗漏值", get_color_from_hex("#EF9A9A"))
 
 def chart_score(scores):
-    return KivyBarChart(scores, "红球综合评分")
+    return _bar_chart(scores, "红球综合评分", get_color_from_hex("#C62828"))
 
 def chart_tail_freq(tails):
-    return KivyBarChart(tails, "尾数频率")
+    return _bar_chart(tails, "尾数频率", get_color_from_hex("#7B1FA2"))
 
 def chart_zone_freq(zones):
     z_names = {"0": "01-11", "1": "12-22", "2": "23-33"}
-    return KivyBarChart(zones, "区间出号", labels=z_names)
+    return _bar_chart(zones, "区间出号", get_color_from_hex("#00897B"), labels=z_names)
 
 def chart_blue_freq(freq):
-    return KivyBarChart(freq, "蓝球出现频率", color=(0.20, 0.60, 0.86, 1))
+    return _bar_chart(freq, "蓝球出现频率", get_color_from_hex("#0D47A1"))
 
 def chart_backtest(strat_g, rand_g):
-    return KivyBarChart({"strat": strat_g, "rand": rand_g}, "回测对比", backtest=True)
+    """回测对比：每奖级两根条（策略红/随机蓝）"""
+    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+    box.bind(minimum_height=box.setter('height'))
+    box.add_widget(_title_row("回测对比"))
+    legend = BoxLayout(orientation='horizontal', size_hint_y=None, height='18dp', spacing=6)
+    legend.add_widget(Label(text="红=策略", size_hint_x=None, width='60dp', size_hint_y=None, height='16dp', font_size='9sp', color=RED))
+    legend.add_widget(Label(text="蓝=随机", size_hint_x=None, width='60dp', size_hint_y=None, height='16dp', font_size='9sp', color=ACCENT))
+    box.add_widget(legend)
+    names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
+    for i, nm in enumerate(names):
+        s = strat_g.get(i, 0)
+        r = rand_g.get(i, 0)
+        tot = s + r
+        if tot <= 0:
+            continue
+        row = BoxLayout(orientation='horizontal', size_hint_y=None, height='20dp', spacing=4)
+        row.add_widget(Label(text=nm, size_hint_x=None, width='36dp', size_hint_y=None, height='18dp', font_size='10sp', color=DARK))
+        b1 = Label(size_hint_x=max(s / tot, 0.01), size_hint_y=None, height='14dp')
+        with b1.canvas.before:
+            Color(*RED)
+            b1.bg = RoundedRectangle(pos=b1.pos, size=b1.size, radius=[3])
+        b1.bind(pos=lambda *a, b=b1: setattr(b.bg, 'pos', a[1]), size=lambda *a, b=b1: setattr(b.bg, 'size', a[1]))
+        row.add_widget(b1)
+        b2 = Label(size_hint_x=max(r / tot, 0.01), size_hint_y=None, height='14dp')
+        with b2.canvas.before:
+            Color(*ACCENT)
+            b2.bg = RoundedRectangle(pos=b2.pos, size=b2.size, radius=[3])
+        b2.bind(pos=lambda *a, b=b2: setattr(b.bg, 'pos', a[1]), size=lambda *a, b=b2: setattr(b.bg, 'size', a[1]))
+        row.add_widget(b2)
+        box.add_widget(row)
+    return box
 
 
 # ============================================================
@@ -766,12 +838,15 @@ class AnalysisScreen(Screen):
 
         # 最新开奖
         self.content.add_widget(_title_row("历史开奖"))
-        hist_grid = BoxLayout(orientation='vertical', size_hint_y=None, height=min(300, max(80, n * 12)))
-        for r in reversed(rows[-min(20, len(rows)):]):
-            line = GridLayout(cols=8, size_hint_y=None, height='34dp', spacing=2)
-            line.add_widget(Label(text=f"{r['code']}", size_hint_x=1.6, height='30dp', font_size='9sp', color=DARK))
-            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '30dp'))
-            line.add_widget(_ball_label(f"{r['blue']:02d}", 0.8, BLUE, '30dp'))
+        shown = rows[-min(20, len(rows)):]
+        hist_grid = BoxLayout(orientation='vertical', size_hint_y=None,
+                              height=len(shown) * 36 + 10, spacing=2)
+        hist_grid.bind(minimum_height=hist_grid.setter('height'))
+        for r in reversed(shown):
+            line = BoxLayout(size_hint_y=None, height='34dp', spacing=3)
+            line.add_widget(Label(text=f"{r['code']}", size_hint_x=None, width="70dp", height='30dp', font_size='9sp', color=DARK))
+            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '26dp'))
+            line.add_widget(_ball_label(f"{r['blue']:02d}", 0.8, BLUE, '26dp'))
             hist_grid.add_widget(line)
         self.content.add_widget(hist_grid)
         self.content.add_widget(Label(size_hint_y=None, height='50dp'))
