@@ -1156,11 +1156,15 @@ class RecordsScreen(Screen):
         self.add_date = TextInput(text=today_str(), hint_text="日期", multiline=False, height='36dp', size_hint_x=1)
         self.add_red = TextInput(hint_text="红球，空格分隔，如 03 08 12 18 25 30", multiline=False, height='36dp', size_hint_x=1)
         self.add_blue = TextInput(hint_text="蓝球，如 07", multiline=False, height='36dp', size_hint_x=1)
+
+        mn_row = BoxLayout(orientation='horizontal', size_hint_y=None, height='36dp', spacing=4)
         self.add_mult = TextInput(text="1", hint_text="倍数", multiline=False, height='36dp', size_hint_x=0.3, input_filter='int')
         self.add_note = TextInput(hint_text="备注（选填）", multiline=False, height='36dp', size_hint_x=0.7)
+        mn_row.add_widget(self.add_mult); mn_row.add_widget(self.add_note)
 
-        for w in [self.add_code, self.add_date, self.add_red, self.add_blue, self.add_mult, self.add_note]:
+        for w in [self.add_code, self.add_date, self.add_red, self.add_blue]:
             box.add_widget(w)
+        box.add_widget(mn_row)
 
         btn = Button(text="保存记录", size_hint_y=None, height='44dp',
                       background_color=ACCENT, color=(1, 1, 1, 1))
@@ -1251,9 +1255,9 @@ class TabBar(GridLayout):
         self.height = '50dp'
         self.row_default_height = '50dp'
         self.tab_labels = []
-        tabs = [("概览", sm), ("分析", sm), ("选号", sm), ("回测", sm), ("记录", sm)]
+        tabs = [("📊\n概览", sm), ("📈\n分析", sm), ("🎯\n选号", sm), ("🔄\n回测", sm), ("📋\n记录", sm)]
         for i, (name, _) in enumerate(tabs):
-            btn = Button(text=name, font_size='14sp', background_color=get_color_from_hex("#F0F0F0"),
+            btn = Button(text=name, font_size='12sp', background_color=get_color_from_hex("#F0F0F0"),
                           color=DARK)
             btn.bind(on_press=lambda *a, idx=i: self._switch(idx))
             self.tab_labels.append(btn)

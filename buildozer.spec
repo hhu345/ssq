@@ -22,6 +22,9 @@ android.minapi = 24
 android.ndk = 28c
 android.archs = armeabi-v7a
 android.accept_sdk_licenses = True
+icon.filename = icon.png
+presplash.filename = splash.png
+presplash_color = #F5F6F8
 log_level = 2
 warn_on_root = 0
 
