@@ -1036,6 +1036,7 @@ class BacktestScreen(Screen):
         self.content.add_widget(self.bt_btn)
 
         self.bt_result = BoxLayout(orientation='vertical', size_hint_y=None, height='10dp', spacing=5)
+        self.bt_result.bind(minimum_height=self.bt_result.setter('height'))
         self.content.add_widget(self.bt_result)
         self.content.add_widget(Label(size_hint_y=None, height='60dp'))
 
@@ -1127,7 +1128,8 @@ class RecordsScreen(Screen):
     def _show_stats(self):
         rows = self.dm.get_data(100000)
         recs, stats = self.dm.check_records(rows)
-        box = BoxLayout(orientation='vertical', size_hint_y=None, height='116dp', padding=5, spacing=2)
+        box = BoxLayout(orientation='vertical', size_hint_y=None, height='130dp', padding=5, spacing=2)
+        box.bind(minimum_height=box.setter('height'))
         box.add_widget(Label(text="统计", font_size='14sp', bold=True, size_hint_y=None, height='28dp'))
         box.add_widget(Label(text=f"总注数: {stats['count']}  待开奖: {stats['pending']}",
                               size_hint_y=None, height='24dp', font_size='11sp', color=DARK))
@@ -1148,7 +1150,8 @@ class RecordsScreen(Screen):
         self._popup("对奖完成", f"共 {stats['count']} 注记录，\n已兑奖 {stats['total_win']:.0f} 元，\n中奖 {win} 注，待开奖 {stats['pending']} 注。")
 
     def _show_add_form(self):
-        box = BoxLayout(orientation='vertical', size_hint_y=None, height='240dp', padding=5, spacing=5)
+        box = BoxLayout(orientation='vertical', size_hint_y=None, height='320dp', padding=5, spacing=5)
+        box.bind(minimum_height=box.setter('height'))
         box.add_widget(Label(text="添加记录", font_size='14sp', bold=True, size_hint_y=None, height='28dp'))
 
         self.add_code = TextInput(hint_text="期号，如 2026098", multiline=False, height='36dp', size_hint_x=1)
