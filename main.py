@@ -176,7 +176,8 @@ class DataManager:
 
     def get_data(self, n=100, refresh=False):
         rows = [] if refresh else self.load_cache()
-        if len(rows) < n:
+        # 仅在缓存为空、或差口不大时才联网拉取（n=100000 表示"全部缓存"，不应触发联网）
+        if not rows or (len(rows) < n and n <= 1000):
             try:
                 rows = self.fetch_all()
                 self.save_cache(rows)
@@ -185,6 +186,14 @@ class DataManager:
                 if not rows: rows = self.load_cache()
         if n >= len(rows): return rows
         return rows[-n:]
+
+    def next_code(self):
+        """推荐期号 = 历史最新期号 + 1（开奖前=当期；开奖后/非开奖日=下一期）"""
+        try:
+            rows = self.get_data(1)
+            return str(int(rows[-1]["code"]) + 1) if rows else ""
+        except Exception:
+            return ""
 
     def get_max_periods(self):
         try:
@@ -1041,7 +1050,8 @@ class GenerateScreen(Screen):
             def _show():
                 self._last_tickets = result
                 self.result_box.clear_widgets()
-                self.result_box.add_widget(_title_row(f"生成 {len(result)} 注（下方已尽量完整展示，可上下滚动）"))
+                rec_code = self.dm.next_code()
+                self.result_box.add_widget(_title_row(f"第 {rec_code} 期 · 生成 {len(result)} 注（可上下滚动）"))
                 for i, t in enumerate(result):
                     line = BoxLayout(size_hint_y=None, height='40dp', spacing=4)
                     line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=None, width='36dp', size_hint_y=None,
@@ -1067,10 +1077,10 @@ class GenerateScreen(Screen):
         threading.Thread(target=_do, daemon=True).start()
 
     def _latest_code(self):
+        """返回推荐期号（最新+1）与今天日期"""
         try:
-            rows = self.dm.get_data(1)
-            r = rows[-1] if rows else None
-            return str(r["code"]) if r else "", str(r["date"]) if r else today_str()
+            nxt = self.dm.next_code()
+            return nxt, today_str()
         except Exception:
             return "", today_str()
 
@@ -1259,7 +1269,7 @@ class RecordsScreen(Screen):
         box = BoxLayout(orientation='vertical', size_hint_y=None, height='340dp', padding=5, spacing=4)
         box.add_widget(Label(text="添加记录", font_size='14sp', bold=True, size_hint_y=None, height='30dp'))
 
-        self.add_code = TextInput(hint_text="期号，如 2026098", multiline=False, height='36dp', size_hint_x=1)
+        self.add_code = TextInput(text=self.dm.next_code(), hint_text="期号（已预填推荐期号）", multiline=False, height='36dp', size_hint_x=1)
         self.add_date = TextInput(text=today_str(), hint_text="日期", multiline=False, height='36dp', size_hint_x=1)
         self.add_red = TextInput(hint_text="红球，空格分隔，如 03 08 12 18 25 30", multiline=False, height='36dp', size_hint_x=1)
         self.add_blue = TextInput(hint_text="蓝球，如 07", multiline=False, height='36dp', size_hint_x=1)
@@ -1281,9 +1291,17 @@ class RecordsScreen(Screen):
 
     def _save_record(self, *args):
         try:
-            code = self.add_code.text.strip()
-            red = [int(x) for x in self.add_red.text.strip().split()]
-            blue = int(self.add_blue.text.strip())
+            code = self.add_code.text.strip() or self.dm.next_code()
+            red_txt = self.add_red.text.strip()
+            blue_txt = self.add_blue.text.strip()
+            if not red_txt:
+                self._popup("提示", "请先填写红球号码（6个，空格分隔）")
+                return
+            if not blue_txt:
+                self._popup("提示", "请先填写蓝球号码（01-16）")
+                return
+            red = [int(x) for x in red_txt.split()]
+            blue = int(blue_txt)
             if len(red) != 6:
                 self._popup("提示", "红球必须是 6 个号码")
                 return
@@ -1330,6 +1348,7 @@ class RecordsScreen(Screen):
                 from kivy.core.clipboard import Clipboard
                 txt = ' '.join(f"{x:02d}" for x in rr.get('red', [])) + ' + ' + f"{rr.get('blue', 0):02d}"
                 Clipboard.copy(txt)
+                self._popup("复制成功", "已复制到剪贴板：\n" + txt)
             cp_btn.bind(on_press=_copy_num)
             top.add_widget(cp_btn)
             del_btn = Button(text="删除", size_hint_x=0.16, height='24dp', font_size='11sp',
@@ -1346,7 +1365,7 @@ class RecordsScreen(Screen):
             balls.add_widget(Label(text=f"红:{rh} 蓝:{bh}", size_hint_x=0.2, height='24dp', font_size='10sp', color=GRAY))
             card.add_widget(balls)
             self.content.add_widget(card)
-        self.content.add_widget(Label(size_hint_y=None, height='60dp'))
+        self.content.add_widget(Label(size_hint_y=None, height='110dp'))
 
     def _del_record(self, rid):
         self.dm.delete_record(rid)
