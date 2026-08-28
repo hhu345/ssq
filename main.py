@@ -676,46 +676,58 @@ class OverviewScreen(Screen):
             for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 1, RED, '40dp'))
             line.add_widget(_ball_label(f"{r['blue']:02d}", 1, BLUE, '40dp'))
             self.content.add_widget(line)
-            info = Label(text=f"第 {r['code']} 期  {r['date']} {r.get('week', '')}\n"
-                         f"销售额: {r.get('sales', 0)//10000}万  奖池: {r.get('poolmoney', 0)//10000}万",
-                         size_hint_y=None, height='50dp', color=DARK, font_size='12sp')
+            pz = r.get('prizes', {})
+            def _pz(t):
+                d = pz.get(str(t), {})
+                return f"{d.get('count', 0)}注/每注{(d.get('money', 0) or 0)//10000}万"
+            info = Label(text=(f"第 {r['code']} 期  {r['date']} {r.get('week', '')}  销售额: {r.get('sales', 0)//10000}万  奖池: {r.get('poolmoney', 0)//10000}万\n"
+                               f"一等奖 {_pz(1)}   二等奖 {_pz(2)}   三等奖 {_pz(3)}"),
+                         size_hint_y=None, height='60dp', color=DARK, font_size='11sp')
             self.content.add_widget(info)
         else:
             self.content.add_widget(Label(text="暂无数据", color=GRAY, size_hint_y=None, height='40dp'))
 
         self.content.add_widget(_title_row("热号 / 冷号"))
+        self.content.add_widget(_hint("热号=近100期红球出现次数最多的前10个；冷号=出现次数最少的前10个（两表互不重复）。蓝球同理。"))
         rows = self.dm.get_data(100)
-        freq = frequency(rows, "red"); omit = omissions(rows, "red", RED_COUNT)
+        freq = frequency(rows, "red")
         hot = sorted(range(1, RED_COUNT + 1), key=lambda i: -freq[i])[:10]
-        cold = sorted(range(1, RED_COUNT + 1), key=lambda i: -omit[i])[:10]
-        bfreq = frequency(rows, "blue"); bomit = omissions(rows, "blue", BLUE_COUNT)
+        cold = sorted(range(1, RED_COUNT + 1), key=lambda i: freq[i])[:10]
+        bfreq = frequency(rows, "blue")
         bhot = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bfreq[i])[:5]
-        bcold = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bomit[i])[:5]
+        bcold = sorted(range(1, BLUE_COUNT + 1), key=lambda i: bfreq[i])[:5]
 
+        self.content.add_widget(_hint("红球热号（出现最多）"))
         hbox = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
         for x in hot: hbox.add_widget(_ball_label(f"{x:02d}", 1, RED, '36dp'))
         self.content.add_widget(hbox)
 
+        self.content.add_widget(_hint("红球冷号（出现最少）"))
         hbox2 = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
         for x in cold: hbox2.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1), '36dp'))
         self.content.add_widget(hbox2)
 
-        bline = GridLayout(cols=8, size_hint_y=None, height='48dp', spacing=3)
+        self.content.add_widget(_hint("蓝球热号（左5，蓝）/ 冷号（右5，灰）"))
+        bline = GridLayout(cols=10, size_hint_y=None, height='40dp', spacing=3)
         for x in bhot: bline.add_widget(_ball_label(f"{x:02d}", 1, BLUE, '30dp'))
+        for x in bcold: bline.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1), '30dp'))
         self.content.add_widget(bline)
 
-        self.content.add_widget(_title_row("图表"))
-        paths = []
-        try:
-            paths.append(chart_freq(freq))
-            paths.append(chart_omit(omit))
-            paths.append(chart_blue_freq(bfreq))
-        except Exception as e:
-            print(f"图表生成失败: {e}")
-
-        for p in paths:
-            if p:
-                self.content.add_widget(p)
+        # 历史开奖（从分析页移入概览，图表仅在分析页展示）
+        self.content.add_widget(_title_row("历史开奖"))
+        allrows = self.dm.get_data(100000)
+        shown = allrows[-min(15, len(allrows)):]
+        hist = BoxLayout(orientation='vertical', size_hint_y=None,
+                         height=len(shown) * 36 + 10, spacing=2)
+        hist.bind(minimum_height=hist.setter('height'))
+        for hr in reversed(shown):
+            hline = BoxLayout(size_hint_y=None, height='34dp', spacing=3)
+            hline.add_widget(Label(text=f"{hr['code']}", size_hint_x=None, width='70dp',
+                                    height='30dp', font_size='9sp', color=DARK))
+            for x in hr["red"]: hline.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '26dp'))
+            hline.add_widget(_ball_label(f"{hr['blue']:02d}", 0.8, BLUE, '26dp'))
+            hist.add_widget(hline)
+        self.content.add_widget(hist)
 
         self.content.add_widget(Label(size_hint_y=None, height='40dp'))
         self.content.add_widget(Label(text="策略不提高中奖概率，理性购彩", size_hint_y=None, height='30dp',
@@ -899,9 +911,23 @@ class GenerateScreen(Screen):
         self.w_zone_s.bind(value=lambda *a: setattr(self.w_zone_l, 'text', f"区间: {a[1]:.2f}"))
         w_grid.add_widget(self.w_zone_l); w_grid.add_widget(self.w_zone_s)
         self.content.add_widget(w_grid)
+        reset_btn = Button(text="权重恢复默认 (0.30/0.35/0.20/0.15)", size_hint_y=None, height='38dp',
+                            background_color=BLUE, color=(1, 1, 1, 1), font_size='12sp')
+        def _reset_w(*a):
+            self.w_freq_s.value = W_FREQ
+            self.w_omit_s.value = W_OMIT
+            self.w_tail_s.value = W_TAIL
+            self.w_zone_s.value = W_ZONE
+            self.w_freq_l.text = f"频率: {W_FREQ}"
+            self.w_omit_l.text = f"遗漏: {W_OMIT}"
+            self.w_tail_l.text = f"尾数: {W_TAIL}"
+            self.w_zone_l.text = f"区间: {W_ZONE}"
+        reset_btn.bind(on_press=_reset_w)
+        self.content.add_widget(reset_btn)
 
         self.content.add_widget(_title_row("约束条件"))
         self.content.add_widget(_hint("和值=6红球和；奇数=红球奇数个数；大号=≥18的个数；跨度=最大-最小；最长连号；单区最多号数(01-11/12-22/23-33区)。"))
+        self.content.add_widget(_hint("建议值：和值 90-120（均值≈100）；奇数 2-4；大号 2-4；跨度 15-30；最长连号 ≤3；单区最多 ≤4。"))
         c_grid = GridLayout(cols=2, size_hint_y=None, height='200dp', spacing=5)
         self.c_sum = TextInput(text=f"{SUM_RANGE[0]}-{SUM_RANGE[1]}", multiline=False,
                                 hint_text="和值区间", size_hint_x=1, height='36dp')
@@ -1099,11 +1125,12 @@ class BacktestScreen(Screen):
     def _build(self):
         self.content.clear_widgets()
         self.content.add_widget(_title_row("回测参数"))
+        self.content.add_widget(_hint("训练窗口=每次用多少期历史计算评分；每期注数=每期机选几注；轮次=重复次数（越多越稳定）；数据期数=总共回看多少期。结果与纯随机对比，策略不提高中奖概率。"))
         g = GridLayout(cols=2, size_hint_y=None, height='200dp', spacing=8)
-        g.add_widget(Label(text="训练窗口(期):", height='36dp')); self.train = TextInput(text="50", multiline=False, height='36dp')
-        g.add_widget(Label(text="每期注数:", height='36dp')); self.k = TextInput(text="5", multiline=False, height='36dp')
-        g.add_widget(Label(text="轮次:", height='36dp')); self.rounds = TextInput(text="10", multiline=False, height='36dp')
-        g.add_widget(Label(text="数据期数:", height='36dp')); self.n = TextInput(text="200", multiline=False, height='36dp')
+        g.add_widget(Label(text="训练窗口(期):", height='36dp', color=DARK)); self.train = TextInput(text="50", multiline=False, height='36dp')
+        g.add_widget(Label(text="每期注数:", height='36dp', color=DARK)); self.k = TextInput(text="5", multiline=False, height='36dp')
+        g.add_widget(Label(text="轮次:", height='36dp', color=DARK)); self.rounds = TextInput(text="10", multiline=False, height='36dp')
+        g.add_widget(Label(text="数据期数:", height='36dp', color=DARK)); self.n = TextInput(text="200", multiline=False, height='36dp')
         for w in [self.train, self.k, self.rounds, self.n]:
             w.input_filter = 'int'
         for w in [self.train, self.k, self.rounds, self.n]:
@@ -1282,23 +1309,31 @@ class RecordsScreen(Screen):
             return
         self.content.add_widget(_title_row(f"购彩记录 ({len(recs)} 条)"))
         for rec in reversed(recs[-50:]):
-            card = BoxLayout(orientation='vertical', size_hint_y=None, height='56dp',
+            card = BoxLayout(orientation='vertical', size_hint_y=None, height='64dp',
                               padding=5, spacing=2)
             with card.canvas.before:
                 Color(1, 1, 1, 1)
                 card.bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[6])
             card.bind(pos=lambda *a: setattr(card.bg, 'pos', a[1]),
                       size=lambda *a: setattr(card.bg, 'size', a[1]))
-            top = BoxLayout(size_hint_y=None, height='26dp', spacing=5)
-            top.add_widget(Label(text=f"{rec.get('code', '?')}  {rec.get('date', '')}",
-                                  size_hint_x=0.35, height='24dp', font_size='10sp'))
+            top = BoxLayout(size_hint_y=None, height='26dp', spacing=4)
+            top.add_widget(Label(text=f"{rec.get('code', '?')} {rec.get('date', '')}",
+                                  size_hint_x=0.32, height='24dp', font_size='10sp', color=DARK))
             st = rec.get('status', '未开奖')
             clr = ACCENT if '一' in st or '二' in st or '三' in st else (RED if '未中奖' in st else GRAY)
-            top.add_widget(Label(text=st, size_hint_x=0.35, height='24dp', font_size='10sp', color=clr))
-            top.add_widget(Label(text=f"{rec.get('win_amount', 0):.0f}元", size_hint_x=0.15, height='24dp',
+            top.add_widget(Label(text=st, size_hint_x=0.22, height='24dp', font_size='10sp', color=clr))
+            top.add_widget(Label(text=f"{rec.get('win_amount', 0):.0f}元", size_hint_x=0.14, height='24dp',
                                   font_size='10sp', color=ACCENT if rec.get('win_amount', 0) > 0 else GRAY))
-            del_btn = Button(text="×", size_hint_x=0.15, height='24dp', font_size='14sp',
-                              background_color=(0.95, 0.95, 0.95, 1), color=(0.7, 0.7, 0.7, 1))
+            cp_btn = Button(text="复制", size_hint_x=0.16, height='24dp', font_size='11sp',
+                             background_color=ACCENT, color=(1, 1, 1, 1))
+            def _copy_num(*a, rr=rec):
+                from kivy.core.clipboard import Clipboard
+                txt = ' '.join(f"{x:02d}" for x in rr.get('red', [])) + ' + ' + f"{rr.get('blue', 0):02d}"
+                Clipboard.copy(txt)
+            cp_btn.bind(on_press=_copy_num)
+            top.add_widget(cp_btn)
+            del_btn = Button(text="删除", size_hint_x=0.16, height='24dp', font_size='11sp',
+                              background_color=(0.95, 0.95, 0.95, 1), color=(0.6, 0.6, 0.6, 1))
             rid = rec['id']
             del_btn.bind(on_press=lambda *a, r=rid: self._del_record(r))
             top.add_widget(del_btn)
@@ -1335,9 +1370,9 @@ class TabBar(GridLayout):
         self.height = '50dp'
         self.row_default_height = '50dp'
         self.tab_labels = []
-        tabs = [("📊\n概览", sm), ("📈\n分析", sm), ("🎯\n选号", sm), ("🔄\n回测", sm), ("📋\n记录", sm)]
+        tabs = [("概览", sm), ("分析", sm), ("选号", sm), ("回测", sm), ("记录", sm)]
         for i, (name, _) in enumerate(tabs):
-            btn = Button(text=name, font_size='12sp', background_color=get_color_from_hex("#F0F0F0"),
+            btn = Button(text=name, font_size='14sp', background_color=get_color_from_hex("#F0F0F0"),
                           color=DARK)
             btn.bind(on_press=lambda *a, idx=i: self._switch(idx))
             self.tab_labels.append(btn)
