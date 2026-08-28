@@ -718,8 +718,8 @@ class AnalysisScreen(Screen):
             r = int(ratio * 231)
             g = int((1 - ratio) * 52)
             b = 0
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='12sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('54dp', '46dp'), halign='center', valign='middle')
+            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='11sp', color=(1, 1, 1, 1),
+                        size_hint=(None, None), size=('40dp', '42dp'), halign='center', valign='middle')
             with lbl.canvas.before:
                 Color(r / 255, g / 255, b, 1)
                 lbl.bg_r = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
@@ -735,8 +735,8 @@ class AnalysisScreen(Screen):
             mx = max(bsc.values())
             ratio = v / mx if mx else 0
             g = int((1 - ratio) * 150)
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='12sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('54dp', '46dp'), halign='center', valign='middle')
+            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='11sp', color=(1, 1, 1, 1),
+                        size_hint=(None, None), size=('40dp', '42dp'), halign='center', valign='middle')
             with lbl.canvas.before:
                 Color(0.2, g / 255, 0.9, 1)
                 lbl.bg_b = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
