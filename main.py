@@ -1332,8 +1332,8 @@ class RecordsScreen(Screen):
             with card.canvas.before:
                 Color(1, 1, 1, 1)
                 card.bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[6])
-            card.bind(pos=lambda *a: setattr(card.bg, 'pos', a[1]),
-                      size=lambda *a: setattr(card.bg, 'size', a[1]))
+            card.bind(pos=lambda *a, c=card: setattr(c.bg, 'pos', a[1]),
+                      size=lambda *a, c=card: setattr(c.bg, 'size', a[1]))
             top = BoxLayout(size_hint_y=None, height='26dp', spacing=4)
             top.add_widget(Label(text=f"{rec.get('code', '?')} {rec.get('date', '')}",
                                   size_hint_x=0.32, height='24dp', font_size='10sp', color=DARK))
