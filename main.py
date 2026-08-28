@@ -388,8 +388,13 @@ class KivyBarChart(Widget):
         self.backtest = backtest
         self.size_hint_y = None
         self.height = '240dp'
+        # 强制在布局完成后重画（解决首次 on_size 时 width=0 画空帧的问题）
+        from kivy.clock import Clock
+        Clock.schedule_once(lambda dt: self.on_size(), 0.2)
 
     def on_size(self, *a):
+        if self.width <= 1 or self.height <= 1:
+            return
         self.canvas.clear()
         self._draw()
 
