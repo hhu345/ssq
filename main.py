@@ -26,7 +26,7 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
-from kivy.uix.spinner import Spinner
+from kivy.uix.spinner import Spinner, SpinnerOption
 from kivy.uix.image import Image
 from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.slider import Slider
@@ -34,6 +34,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.progressbar import ProgressBar
 from kivy.clock import Clock, mainthread
 from kivy.graphics import Color, Rectangle, RoundedRectangle
+from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
 from kivy.core.window import Window
 
@@ -100,6 +101,49 @@ DARK = get_color_from_hex("#222222")
 GRAY = get_color_from_hex("#888888")
 WHITE = get_color_from_hex("#FFFFFF")
 BG = get_color_from_hex("#F5F6F8")
+
+# ============================================================
+# 主题系统（浅色 / 深色双模式）
+# ============================================================
+
+_PALETTES = {
+    'light': dict(
+        bg='#F2F4F8', card='#FFFFFF', card2='#F2F5FA', field='#FFFFFF',
+        text='#1B2530', sub='#5E6B7C', hint='#98A2B3',
+        primary='#165DFF', primary_deep='#0E42D2', primary_soft='#E8EFFF',
+        border='#E4E7EC', tab_bg='#FFFFFF',
+        hot='#D93025', hot_soft='#FDECEA', cold='#667085', cold_soft='#EDF0F4',
+        blue='#1650D8', blue_soft='#E3EDFF', win='#0C9A6C', win_soft='#E5F6EF',
+        warn='#F2A93B', violet='#7C5CFF', cyan='#12B5CB',
+        shadow=(0.07, 0.10, 0.17),
+    ),
+    'dark': dict(
+        bg='#12151C', card='#1C2230', card2='#242C3D', field='#1A2030',
+        text='#E8ECF3', sub='#A5AEBD', hint='#6B7484',
+        primary='#4D7EFF', primary_deep='#3B66E0', primary_soft='#22304F',
+        border='#2A3345', tab_bg='#1C2230',
+        hot='#FF6B5E', hot_soft='#3A2320', cold='#8A93A5', cold_soft='#262E3F',
+        blue='#7CA0FF', blue_soft='#22304F', win='#2FC08A', win_soft='#173229',
+        warn='#F2A93B', violet='#9B85FF', cyan='#2BC8D8',
+        shadow=(0.0, 0.0, 0.0),
+    ),
+}
+
+class _Theme:
+    mode = 'light'
+    @classmethod
+    def c(cls, key):
+        return get_color_from_hex(_PALETTES[cls.mode][key])
+    @classmethod
+    def toggle(cls):
+        cls.mode = 'dark' if cls.mode == 'light' else 'light'
+
+def C(key):
+    """取当前主题颜色"""
+    return _Theme.c(key)
+
+def C_HEX(key):
+    return _PALETTES[_Theme.mode][key]
 
 # ============================================================
 # 工具函数
@@ -514,72 +558,614 @@ class KivyBarChart(Widget):
                           size=(tex.width, tex.height))
 
 
-def _hbar_row(lab, ratio, color, val_text=''):
+
+def _lbl(text='', fs=13, color_key='text', bold=False, halign='left', valign='middle',
+         h=None, width=None, size_hint_x=None):
+    """通用 Label：自动绑定 text_size（支持 halign/valign）"""
+    lbl = Label(text=str(text), font_size=dp(fs), bold=bold, color=C(color_key),
+                size_hint_y=None, halign=halign, valign=valign)
+    if h:
+        lbl.height = dp(h) if isinstance(h, (int, float)) else h
+    if width is not None:
+        lbl.size_hint_x = None
+        lbl.width = dp(width) if isinstance(width, (int, float)) else width
+    if size_hint_x is not None:
+        lbl.size_hint_x = size_hint_x
+    lbl.bind(size=lambda o, v: setattr(o, 'text_size', (o.width, o.height or None)))
+    lbl.text_size = (lbl.width, lbl.height or None)
+    return lbl
+
+
+def _bg(w, fill, radius=14, border=None, shadow=False):
+    """给 widget 画圆角背景（可选描边/柔和阴影），并绑定跟随位置尺寸"""
+    sh = _PALETTES[_Theme.mode]['shadow']
+    has_shadow = shadow and (sh[0] or sh[1] or sh[2])
+    radius = dp(radius) if isinstance(radius, (int, float)) else radius
+    with w.canvas.before:
+        if has_shadow:
+            for dy, spread, a in ((dp(1), dp(5), 0.05), (dp(3), dp(10), 0.03)):
+                Color(sh[0], sh[1], sh[2], a)
+                RoundedRectangle(pos=(w.x - spread / 2, w.y - dy),
+                                 size=(w.width + spread, w.height + spread),
+                                 radius=[radius + dp(3)])
+        Color(*fill)
+        w._bg_rect = RoundedRectangle(pos=w.pos, size=w.size, radius=[radius])
+        if border is not None:
+            Color(*border)
+            w._bg_border = Line(rounded_rectangle=(w.x, w.y, w.width, w.height, radius), width=1)
+
+    def _sync(o, v):
+        o._bg_rect.pos = o.pos
+        o._bg_rect.size = o.size
+        if border is not None:
+            o._bg_border.rounded_rectangle = (o.x, o.y, o.width, o.height, radius)
+    w.bind(pos=_sync, size=_sync)
+    return w
+
+
+def Card(*children, **kw):
+    """卡片：圆角 + 柔和阴影 + 自适应内容高度"""
+    pad = kw.get('padding', dp(12))
+    sp = kw.get('spacing', dp(8))
+    radius = kw.get('radius', 14)
+    fill = kw.get('fill') or C('card')
+    box = BoxLayout(orientation='vertical', size_hint_y=None, padding=pad, spacing=sp)
+    box.bind(minimum_height=lambda o, v: setattr(o, 'height', v + pad * 2))
+    _bg(box, fill, radius=radius, shadow=kw.get('shadow', True))
+    for ch in children:
+        box.add_widget(ch)
+    return box
+
+
+_CAP_STYLES = {'red': ('hot_soft', 'hot'), 'blue': ('blue_soft', 'blue'),
+               'cold': ('cold_soft', 'cold'), 'dim': ('card2', 'sub'),
+               'win': ('win_soft', 'win'), 'primary': ('primary_soft', 'primary')}
+
+
+def Capsule(text, kind='red', w=None, h=None, fs=None, bold=True):
+    """圆角胶囊号码标签（现代样式，浅底深字）"""
+    h = h or dp(30)
+    w = w or dp(40)
+    bgl, fgl = _CAP_STYLES.get(kind, _CAP_STYLES['dim'])
+    lbl = Label(text=str(text), font_size=fs or dp(12), bold=bold, color=C(fgl),
+                size_hint=(None, None), size=(w, h), halign='center', valign='middle')
+    lbl.text_size = (w, h)
+    _bg(lbl, C(bgl), radius=h / 2)
+    return lbl
+
+
+def _ball_label(text, color, bg, size='48dp'):
+    """兼容旧签名：转调 Capsule"""
+    try:
+        d = int(str(size).replace('dp', ''))
+    except Exception:
+        d = 40
+    if bg == BLUE:
+        kind = 'blue'
+    elif bg == RED:
+        kind = 'red'
+    else:
+        kind = 'cold'
+    return Capsule(text, kind, w=dp(d), h=dp(int(d * 0.8)), fs=dp(12) if d < 36 else dp(14))
+
+
+def SectionTitle(text, right=None):
+    """区块标题：主色竖条 + 加粗文字（可附右侧组件）"""
+    row = BoxLayout(size_hint_y=None, height=dp(26), spacing=dp(8))
+    bar = Widget(size_hint=(None, 1), width=dp(4))
+    _bg(bar, C('primary'), radius=dp(2))
+    row.add_widget(bar)
+    lbl = _lbl(text, 15, 'text', bold=True, h=26, size_hint_x=1)
+    row.add_widget(lbl)
+    if right is not None:
+        row.add_widget(right)
+    return row
+
+
+def _title_row(text):
+    """兼容旧签名"""
+    return SectionTitle(text)
+
+
+def Hint(text, h=None):
+    """辅助说明小字：高度随内容自适应（多行不溢出）"""
+    lbl = Label(text=str(text), font_size=dp(11), color=C('sub'),
+                size_hint_y=None, halign='left', valign='middle')
+    lbl.bind(width=lambda o, v: setattr(o, 'text_size', (v, None)))
+    lbl.bind(texture_size=lambda o, v: setattr(o, 'height', max(v[1], dp(16))))
+    lbl.height = dp(16)
+    return lbl
+
+
+def _hint(text):
+    """兼容旧签名"""
+    return Hint(text)
+
+
+def _row(*widgets, **kw):
+    h = kw.get('height', '40dp')
+    box = BoxLayout(size_hint_y=None, height=h, spacing=dp(8), **{k: v for k, v in kw.items() if k != 'height'})
+    for w in widgets:
+        box.add_widget(w)
+    return box
+
+
+def PButton(text, kind='primary', h=46, fs=14, on_press=None, pill=False, **kw):
+    """现代圆角按钮：primary 主色 / soft 浅底 / ghost 描边 / danger 红调"""
+    h = dp(h) if isinstance(h, (int, float)) else h
+    styles = {
+        'primary': (C('primary'), (1, 1, 1, 1), None),
+        'soft': (C('primary_soft'), C('primary'), None),
+        'ghost': ((0, 0, 0, 0), C('sub'), C('border')),
+        'danger': (C('hot_soft'), C('hot'), None),
+        'win': (C('win_soft'), C('win'), None),
+    }
+    fill, fg, border = styles.get(kind, styles['primary'])
+    b = Button(text=str(text), font_size=dp(fs), size_hint_y=None, height=h,
+               background_color=(0, 0, 0, 0), color=fg, bold=(kind == 'primary'),
+               disabled_color=fg, **kw)
+    _bg(b, fill, radius=(h / 2 if pill else dp(12)),
+        border=border if border is not None else None)
+    if on_press:
+        b.bind(on_press=on_press)
+    return b
+
+
+def TInput(hint='', text='', h=40, **kw):
+    """圆角输入框（聚焦主色描边）"""
+    hpx = dp(h) if isinstance(h, (int, float)) else h
+    ti = TextInput(hint_text=hint, text=text, multiline=False, size_hint_y=None, height=hpx,
+                   font_size=dp(13), background_normal='', background_disabled_normal='',
+                   background_active='', background_color=(0, 0, 0, 0),
+                   foreground_color=C('text'), cursor_color=C('primary'),
+                   hint_text_color=C('hint'), padding=[dp(10), (hpx - dp(16)) / 2, dp(10), 0],
+                   write_tab=False, **kw)
+
+    def _draw(focused=False):
+        ti.canvas.before.clear()
+        with ti.canvas.before:
+            Color(*C('field'))
+            RoundedRectangle(pos=ti.pos, size=ti.size, radius=[dp(10)])
+            Color(*(C('primary') if focused else C('border')))
+            Line(rounded_rectangle=(ti.x, ti.y, ti.width, ti.height, dp(10)), width=1)
+
+    def _sync(o, v):
+        _draw(getattr(o, '_focused', False))
+    ti._focused = False
+    ti.bind(pos=_sync, size=_sync)
+    ti.bind(focus=lambda o, v: (setattr(o, '_focused', v), _draw(v)))
+    _draw()
+    return ti
+
+
+class _TOption(SpinnerOption):
+    """Spinner 下拉选项（主题化）"""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.background_normal = ''
+        self.background_down = ''
+        self.background_color = (0, 0, 0, 0)
+        self.height = dp(42)
+        self.font_size = dp(13)
+        self.color = C('text')
+        _bg(self, C('card'), radius=dp(10), border=C('border'))
+
+
+class TSpinner(Spinner):
+    """圆角 Spinner（下拉浮层主题化）"""
+
+    def __init__(self, values=(), text='', **kw):
+        super().__init__(text=text, values=list(values), **kw)
+        self.background_normal = ''
+        self.background_down = ''
+        self.background_color = (0, 0, 0, 0)
+        self.font_size = dp(13)
+        self.color = C('text')
+        self.bold = False
+        self.option_cls = _TOption
+        _bg(self, C('field'), radius=dp(10), border=C('border'))
+
+    def _toggle_dropdown(self, *largs):
+        had = self.dropdown
+        super()._toggle_dropdown(*largs)
+        dd = self.dropdown
+        if dd is not None and dd is not had:
+
+            def _paint(o=None, v=None):
+                dd.canvas.clear()
+                with dd.canvas.before:
+                    Color(*C('card'))
+                    RoundedRectangle(pos=dd.pos, size=dd.size, radius=[dp(10)])
+                    Color(*C('border'))
+                    Line(rounded_rectangle=(dd.x, dd.y, dd.width, dd.height, dp(10)), width=1)
+            _paint()
+            dd.bind(pos=_paint, size=_paint)
+
+
+class SoftSlider(Widget):
+    """自绘触控滑条：圆角轨道 + 主色填充 + 圆形手柄（手指友好）"""
+
+    def __init__(self, value=0.5, vmin=0.0, vmax=1.0, on_change=None, fill_key='primary', **kw):
+        super().__init__(**kw)
+        self.size_hint_y = None
+        self.height = dp(34)
+        self._min = vmin
+        self._max = vmax
+        self.value = value
+        self._cb = on_change
+        self._fill = fill_key
+        self.bind(pos=self._redraw, size=self._redraw)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def _set_frac(self, frac):
+        frac = max(0.0, min(1.0, frac))
+        v = self._min + (self._max - self._min) * frac
+        if abs(v - self.value) > 1e-6:
+            self.value = v
+            if self._cb:
+                self._cb(v)
+
+    def on_touch_down(self, touch):
+        if self.collide_point(*touch.pos):
+            touch.grab(self)
+            self._set_frac((touch.x - self.x - dp(10)) / max(dp(1), self.width - dp(20)))
+            return True
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if touch.grab_current is self:
+            self._set_frac((touch.x - self.x - dp(10)) / max(dp(1), self.width - dp(20)))
+            return True
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if touch.grab_current is self:
+            touch.ungrab(self)
+            return True
+        return super().on_touch_up(touch)
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        cy = self.center_y
+        x0 = self.x + dp(10)
+        x1 = self.x + self.width - dp(10)
+        if x1 <= x0:
+            return
+        frac = max(0.0, min(1.0, (self.value - self._min) / ((self._max - self._min) or 1)))
+        with self.canvas:
+            Color(*C('border'))
+            RoundedRectangle(pos=(x0, cy - dp(2)), size=(x1 - x0, dp(4)), radius=[dp(2)])
+            Color(*C(self._fill))
+            RoundedRectangle(pos=(x0, cy - dp(2)), size=(max(dp(4), (x1 - x0) * frac), dp(4)),
+                             radius=[dp(2)])
+            hx = x0 + (x1 - x0) * frac
+            Color(1, 1, 1, 1)
+            Ellipse(pos=(hx - dp(9), cy - dp(9)), size=(dp(18), dp(18)))
+            Color(*C(self._fill))
+            Line(circle=(hx, cy, dp(8.5)), width=dp(1.6))
+
+
+class MixBar(Widget):
+    """权重占比条：四色分段，宽度与权重成正比"""
+
+    _keys = ['primary', 'violet', 'cyan', 'warn']
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.size_hint_y = None
+        self.height = dp(14)
+        self._vals = [0.25, 0.25, 0.25, 0.25]
+        self.bind(pos=self._redraw, size=self._redraw)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def update(self, vals):
+        self._vals = list(vals)
+        self._redraw()
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        tot = sum(self._vals) or 1
+        x = self.x
+        with self.canvas:
+            for i, v in enumerate(self._vals):
+                seg = self.width * v / tot
+                Color(*C(self._keys[i % 4]))
+                RoundedRectangle(pos=(x, self.y + dp(1)),
+                                 size=(max(dp(2), seg - dp(1)), self.height - dp(2)),
+                                 radius=[dp(2)])
+                x += seg
+
+
+class Icon(Widget):
+    """自绘线性图标（无字体依赖）"""
+
+    def __init__(self, name, size_dp=22, color=None, **kw):
+        super().__init__(**kw)
+        self.size_hint = (None, None)
+        self.size = (dp(size_dp), dp(size_dp))
+        self._name = name
+        self._col = color if color is not None else C('sub')
+        self._lw = dp(1.6)
+        self.bind(pos=self._redraw, size=self._redraw)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def set_icon(self, name):
+        self._name = name
+        self._redraw()
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        fn = getattr(self, '_ic_' + self._name, None)
+        if fn:
+            fn()
+
+    def _ic_home(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        cx = x + w / 2
+        ym = y + h * 0.44
+        yt = y + h * 0.9
+        yb = y + h * 0.1
+        with self.canvas:
+            Color(*self._col)
+            Line(points=[x + w * 0.06, ym, cx, yt, x + w * 0.94, ym], width=self._lw)
+            Line(rounded_rectangle=(x + w * 0.22, yb, w * 0.56, ym - yb, 2), width=self._lw)
+
+    def _ic_chart(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            for i, hh in enumerate((0.4, 0.72, 1.0)):
+                RoundedRectangle(pos=(x + w * (0.12 + i * 0.31), y + h * 0.08),
+                                 size=(w * 0.2, (h - dp(2)) * hh * 0.9), radius=[dp(1.5)])
+
+    def _ic_target(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        cx, cy = x + w / 2, y + h / 2
+        r = min(w, h) / 2 - self._lw
+        with self.canvas:
+            Color(*self._col)
+            Line(circle=(cx, cy, r * 0.95), width=self._lw)
+            Line(circle=(cx, cy, r * 0.55), width=self._lw)
+            Color(*self._col)
+            Ellipse(pos=(cx - r * 0.14, cy - r * 0.14), size=(r * 0.28, r * 0.28))
+
+    def _ic_loop(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        cx, cy = x + w / 2, y + h / 2
+        r = min(w, h) / 2 - self._lw
+        with self.canvas:
+            Color(*self._col)
+            Line(circle=(cx, cy, r, 25, 155), width=self._lw)
+            Line(circle=(cx, cy, r, 205, 335), width=self._lw)
+            Color(*self._col)
+            Triangle(points=[cx + r * 0.92, cy + r * 0.42, cx + r * 0.62, cy + r * 0.30,
+                             cx + r * 0.92, cy + r * 0.02])
+            Triangle(points=[cx - r * 0.92, cy - r * 0.42, cx - r * 0.62, cy - r * 0.30,
+                             cx - r * 0.92, cy - r * 0.02])
+
+    def _ic_list(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            for i, fy in enumerate((0.78, 0.52, 0.26)):
+                yy = y + h * fy
+                Line(points=[x + w * 0.32, yy, x + w * 0.94, yy], width=self._lw)
+                Ellipse(pos=(x + w * 0.06, yy - dp(1.6)), size=(dp(3.2), dp(3.2)))
+
+    def _ic_copy(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            Line(rounded_rectangle=(x + w * 0.34, y + h * 0.06, w * 0.56, h * 0.56, dp(3)), width=self._lw)
+            Line(rounded_rectangle=(x + w * 0.1, y + h * 0.32, w * 0.56, h * 0.56, dp(3)), width=self._lw)
+
+    def _ic_trash(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            Line(points=[x + w * 0.14, y + h * 0.8, x + w * 0.86, y + h * 0.8], width=self._lw)
+            Line(points=[x + w * 0.5, y + h * 0.8, x + w * 0.5, y + h * 0.92], width=self._lw)
+            Line(rounded_rectangle=(x + w * 0.24, y + h * 0.08, w * 0.52, h * 0.66, dp(3)), width=self._lw)
+            Line(points=[x + w * 0.42, y + h * 0.22, x + w * 0.42, y + h * 0.6], width=self._lw)
+            Line(points=[x + w * 0.58, y + h * 0.22, x + w * 0.58, y + h * 0.6], width=self._lw)
+
+    def _ic_sun(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        cx, cy = x + w / 2, y + h / 2
+        r = min(w, h) / 2
+        with self.canvas:
+            Color(*self._col)
+            Ellipse(pos=(cx - r * 0.32, cy - r * 0.32), size=(r * 0.64, r * 0.64))
+            for i in range(8):
+                ang = i * 3.14159265 / 4
+                x1 = cx + (r * 0.52) * (1 if abs((i % 4) - 2) < 0.5 else 0.707) * (1 if i % 4 != 2 else 0)
+                from math import cos, sin
+                x1 = cx + (r * 0.55) * cos(ang)
+                y1 = cy + (r * 0.55) * sin(ang)
+                x2 = cx + (r * 0.85) * cos(ang)
+                y2 = cy + (r * 0.85) * sin(ang)
+                Line(points=[x1, y1, x2, y2], width=self._lw)
+
+    def _ic_moon(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        cx, cy = x + w / 2, y + h / 2
+        r = min(w, h) / 2 - self._lw
+        with self.canvas:
+            Color(*self._col)
+            Line(circle=(cx, cy, r * 0.9, 55, 305), width=self._lw)
+            Line(circle=(cx + r * 0.42, cy + r * 0.1, r * 0.72, 170, 375), width=self._lw)
+
+    def _ic_chev_down(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            Line(points=[x + w * 0.22, y + h * 0.62, x + w * 0.5, y + h * 0.32,
+                         x + w * 0.78, y + h * 0.62], width=self._lw)
+
+    def _ic_chev_right(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        with self.canvas:
+            Color(*self._col)
+            Line(points=[x + w * 0.36, y + h * 0.74, x + w * 0.66, y + h * 0.5,
+                         x + w * 0.36, y + h * 0.26], width=self._lw)
+
+
+def IconBtn(name, on_press=None, d=38, fill=None, icon_color=None, icon_size=None):
+    """圆形图标按钮"""
+    dpx = dp(d) if isinstance(d, (int, float)) else d
+    b = Button(size_hint=(None, None), size=(dpx, dpx), background_color=(0, 0, 0, 0))
+    _bg(b, fill if fill is not None else C('card2'), radius=int(dpx / 2))
+    ic = Icon(name, size_dp=icon_size or int(dpx / dp(1) * 0.52),
+              color=icon_color or C('sub'))
+    b.add_widget(ic)
+    if on_press:
+        b.bind(on_press=on_press)
+    return b
+
+
+def Toast(msg):
+    """底部浮出提示条，1.5 秒后淡出"""
+    wpx = min(dp(13) * len(str(msg)) + dp(44), Window.width - dp(48))
+    lbl = Label(text=str(msg), font_size=dp(12), color=(1, 1, 1, 1), size_hint=(None, None),
+                size=(wpx, dp(38)), halign='center', valign='middle')
+    lbl.text_size = lbl.size
+    _bg(lbl, (0.10, 0.12, 0.16, 0.93), radius=dp(19))
+    lbl.pos = ((Window.width - wpx) / 2, dp(96))
+    Window.add_widget(lbl)
+    anim = Animation(opacity=0, d=1.2, t='in_quad')
+    anim.bind(on_complete=lambda *a: Window.remove_widget(lbl))
+    Clock.schedule_once(lambda *a: anim.start(lbl), 1.0)
+    return lbl
+
+
+class FoldPanel(BoxLayout):
+    """可折叠面板卡片：点击标题展开/收起"""
+
+    def __init__(self, title, builder, open=False, **kw):
+        super().__init__(orientation='vertical', size_hint_y=None, **kw)
+        self._open = bool(open)
+        self._min_h = 0
+        box = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
+        box.bind(minimum_height=lambda o, v: setattr(o, 'height', v + dp(24)))
+        _bg(box, C('card'), radius=dp(14), shadow=True)
+        head = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(30), spacing=dp(6))
+        head.add_widget(SectionTitle(title, bare=True) if False else _lbl(title, 15, 'text', bold=True, h=26, size_hint_x=1))
+        self.chev = Icon('chev_down' if self._open else 'chev_right', size_dp=18, color=C('sub'))
+        head.add_widget(Widget())
+        head.add_widget(self.chev)
+        head_btn = Button(size_hint=(1, 1), background_color=(0, 0, 0, 0))
+        head_btn.bind(on_press=self.toggle)
+        head.add_widget(head_btn)
+        box.add_widget(head)
+        self.body = BoxLayout(orientation='vertical', size_hint_y=None, height=0, spacing=dp(8))
+        self.body.bind(minimum_height=self._on_min)
+        builder(self.body)
+        box.add_widget(self.body)
+        self.add_widget(box)
+        Clock.schedule_once(lambda *a: self._apply(instant=True), 0)
+
+    def _on_min(self, o, v):
+        self._min_h = v
+        if self._open and abs(self.body.height - v) > 0.5:
+            self.body.height = v
+
+    def _apply(self, instant=False):
+        target = self._min_h if self._open else 0
+        self.body.opacity = 1 if self._open else 0
+        if instant:
+            self.body.height = target
+            self.body.opacity = 1 if self._open else 0
+        else:
+            Animation(height=target, d=0.18, t='out_quad').start(self.body)
+            Animation(opacity=1 if self._open else 0, d=0.15).start(self.body)
+
+    def toggle(self, *a):
+        self._open = not self._open
+        self.chev.set_icon('chev_down' if self._open else 'chev_right')
+        self._apply()
+
+
+def _hbar_row(lab, ratio, color, val_text='', lab_w=36):
     """单行水平条形：标签 + 彩色条 + 数值（条宽显式 dp，比例确定）"""
-    row = BoxLayout(orientation='horizontal', size_hint_y=None, height='20dp', spacing=4)
-    row.add_widget(Label(text=str(lab), size_hint_x=None, width='36dp',
-                          size_hint_y=None, height='18dp', font_size='10sp', color=DARK))
+    row = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(20), spacing=dp(4))
+    row.add_widget(_lbl(str(lab), 10, 'sub', h=18, width=lab_w))
     bar_w = int(10 + 240 * max(0.0, min(1.0, ratio)))
-    bar = Label(size_hint_x=None, width=f'{bar_w}dp', size_hint_y=None, height='16dp')
+    bar = Widget(size_hint_x=None, width=dp(bar_w), size_hint_y=None, height=dp(14))
     with bar.canvas.before:
         Color(*color)
-        bar.bg = RoundedRectangle(pos=bar.pos, size=bar.size, radius=[3])
+        bar.bg = RoundedRectangle(pos=bar.pos, size=bar.size, radius=[dp(3)])
     bar.bind(pos=lambda *a, b=bar: setattr(b.bg, 'pos', a[1]),
              size=lambda *a, b=bar: setattr(b.bg, 'size', a[1]))
     row.add_widget(bar)
     if val_text:
-        row.add_widget(Label(text=val_text, size_hint_x=None, width='40dp',
-                              size_hint_y=None, height='18dp', font_size='9sp', color=GRAY))
+        row.add_widget(_lbl(val_text, 9, 'hint', h=18, width=44))
     return row
 
 
 def _bar_chart(data, title='', color=None, labels=None):
-    """基于 Label+背景色 的水平条形图，按比例自动占满屏宽"""
-    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+    """基于 Widget+背景色 的水平条形图，按比例自动占满屏宽"""
+    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(3))
     box.bind(minimum_height=box.setter('height'))
     if title:
-        box.add_widget(_title_row(title))
-    items = sorted(data.keys())
-    vals = [data[k] for k in items]
-    vmax = max(vals) if vals else 1
-    if vmax <= 0:
-        vmax = 1
-    c = color if color else (0.20, 0.60, 0.86, 1)
-    for k in items:
-        lab = labels.get(str(k), str(k)) if labels else str(k)
-        v = data[k]
-        vt = ("%.2f" % v) if isinstance(v, float) else str(v)
-        box.add_widget(_hbar_row(lab, v / vmax, c, vt))
+        box.add_widget(SectionTitle(title))
+    for i, (k, v) in enumerate(data.items()):
+        mx = max(data.values()) or 1
+        ratio = v / mx
+        val = labels[i] if (labels and i < len(labels)) else f"{v:.0f}"
+        box.add_widget(_hbar_row(k, ratio, color if color is not None else C('primary'), val))
     return box
 
 
 def chart_freq(freq):
-    return _bar_chart(freq, "红球出现频率", get_color_from_hex("#C62828"))
+    return _bar_chart(freq, "红球出现频率", C('hot'))
+
 
 def chart_omit(omit):
-    return _bar_chart(omit, "红球遗漏值", get_color_from_hex("#EF9A9A"))
+    return _bar_chart(omit, "红球遗漏值", C('hot'))
+
 
 def chart_score(scores):
-    return _bar_chart(scores, "红球综合评分", get_color_from_hex("#C62828"))
+    return _bar_chart(scores, "红球综合评分", C('hot'))
+
 
 def chart_tail_freq(tails):
-    return _bar_chart(tails, "尾数频率", get_color_from_hex("#7B1FA2"))
+    return _bar_chart(tails, "尾数频率", C('violet'))
+
 
 def chart_zone_freq(zones):
-    z_names = {"0": "01-11", "1": "12-22", "2": "23-33"}
-    return _bar_chart(zones, "区间出号", get_color_from_hex("#00897B"), labels=z_names)
+    z_names = {0: "一区(01-11)", 1: "二区(12-22)", 2: "三区(23-33)"}
+    return _bar_chart(zones, "区间出号", C('cyan'), labels=z_names)
+
 
 def chart_blue_freq(freq):
-    return _bar_chart(freq, "蓝球出现频率", get_color_from_hex("#0D47A1"))
+    return _bar_chart(freq, "蓝球出现频率", C('blue'))
+
 
 def chart_backtest(strat_g, rand_g):
-    """回测对比：每奖级两根条（策略红/随机蓝）"""
-    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+    """回测对比：每奖级双条（策略=主蓝 / 随机=灰蓝）"""
+    box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(3))
     box.bind(minimum_height=box.setter('height'))
-    box.add_widget(_title_row("回测对比"))
-    legend = BoxLayout(orientation='horizontal', size_hint_y=None, height='18dp', spacing=6)
-    legend.add_widget(Label(text="红=策略", size_hint_x=None, width='60dp', size_hint_y=None, height='16dp', font_size='9sp', color=RED))
-    legend.add_widget(Label(text="蓝=随机", size_hint_x=None, width='60dp', size_hint_y=None, height='16dp', font_size='9sp', color=ACCENT))
+    box.add_widget(SectionTitle("策略 vs 随机（各奖级注数）"))
+    legend = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(18), spacing=dp(12))
+    _seg = BoxLayout(size_hint_x=None, width=dp(12), size_hint_y=None, height=dp(10))
+    with _seg.canvas.before:
+        Color(*C('primary'))
+        _seg.bg = RoundedRectangle(pos=_seg.pos, size=_seg.size, radius=[dp(2)])
+    _seg.bind(pos=lambda *a: setattr(_seg.bg, 'pos', a[1]), size=lambda *a: setattr(_seg.bg, 'size', a[1]))
+    lg1 = BoxLayout(size_hint_x=None, width=dp(64), spacing=dp(4))
+    lg1.add_widget(_seg)
+    lg1.add_widget(_lbl("策略", 9, 'text', h=16))
+    _seg2 = BoxLayout(size_hint_x=None, width=dp(12), size_hint_y=None, height=dp(10))
+    with _seg2.canvas.before:
+        Color(*C('cold'))
+        _seg2.bg = RoundedRectangle(pos=_seg2.pos, size=_seg2.size, radius=[dp(2)])
+    _seg2.bind(pos=lambda *a: setattr(_seg2.bg, 'pos', a[1]), size=lambda *a: setattr(_seg2.bg, 'size', a[1]))
+    lg2 = BoxLayout(size_hint_x=None, width=dp(64), spacing=dp(4))
+    lg2.add_widget(_seg2)
+    lg2.add_widget(_lbl("随机", 9, 'text', h=16))
+    legend.add_widget(lg1)
+    legend.add_widget(lg2)
     box.add_widget(legend)
     names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
     for i, nm in enumerate(names):
@@ -588,73 +1174,21 @@ def chart_backtest(strat_g, rand_g):
         tot = s + r
         if tot <= 0:
             continue
-        row = BoxLayout(orientation='horizontal', size_hint_y=None, height='20dp', spacing=4)
-        row.add_widget(Label(text=nm, size_hint_x=None, width='36dp', size_hint_y=None, height='18dp', font_size='10sp', color=DARK))
-        b1 = Label(size_hint_x=max(s / tot, 0.01), size_hint_y=None, height='14dp')
+        row = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(22), spacing=dp(4))
+        row.add_widget(_lbl(nm, 10, 'sub', h=18, width=34))
+        b1 = Widget(size_hint_x=max(s / tot, 0.02), size_hint_y=None, height=dp(15))
         with b1.canvas.before:
-            Color(*RED)
-            b1.bg = RoundedRectangle(pos=b1.pos, size=b1.size, radius=[3])
+            Color(*C('primary'))
+            b1.bg = RoundedRectangle(pos=b1.pos, size=b1.size, radius=[dp(3)])
         b1.bind(pos=lambda *a, b=b1: setattr(b.bg, 'pos', a[1]), size=lambda *a, b=b1: setattr(b.bg, 'size', a[1]))
         row.add_widget(b1)
-        b2 = Label(size_hint_x=max(r / tot, 0.01), size_hint_y=None, height='14dp')
+        b2 = Widget(size_hint_x=max(r / tot, 0.02), size_hint_y=None, height=dp(15))
         with b2.canvas.before:
-            Color(*ACCENT)
-            b2.bg = RoundedRectangle(pos=b2.pos, size=b2.size, radius=[3])
+            Color(*C('cold'))
+            b2.bg = RoundedRectangle(pos=b2.pos, size=b2.size, radius=[dp(3)])
         b2.bind(pos=lambda *a, b=b2: setattr(b.bg, 'pos', a[1]), size=lambda *a, b=b2: setattr(b.bg, 'size', a[1]))
         row.add_widget(b2)
         box.add_widget(row)
-    return box
-
-
-# ============================================================
-# UI 辅助
-# ============================================================
-
-def _ball_label(text, color, bg, size='48dp'):
-    """圆形球号标签，size 可调（'30dp'/'38dp'/'48dp'）"""
-    lbl = Label(text=text, font_size='12sp', bold=True, color=(1, 1, 1, 1),
-                size_hint=(None, None), size=(size, size), halign='center', valign='middle')
-    lbl.font_size = '11sp' if size in ('30dp','32dp','36dp') else '14sp'
-    with lbl.canvas.before:
-        Color(*bg)
-        lbl.bg_rect = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[int(size.replace('dp',''))//2])
-    lbl.bind(pos=lambda *a: setattr(lbl.bg_rect, 'pos', a[1]),
-             size=lambda *a: setattr(lbl.bg_rect, 'size', a[1]))
-    return lbl
-
-
-def _section_box(child, **kw):
-    """分区容器"""
-    box = BoxLayout(orientation='vertical', size_hint_y=None, **kw)
-    box.bind(minimum_height=box.setter('height'))
-    outer = BoxLayout(orientation='vertical', size_hint_y=None, height=child.height + 20, padding=10,
-                      spacing=5)
-    with outer.canvas.before:
-        Color(1, 1, 1, 1)
-        outer.bg = RoundedRectangle(pos=outer.pos, size=outer.size, radius=[8])
-    outer.bind(pos=lambda *a: setattr(outer.bg, 'pos', a[1]),
-               size=lambda *a: setattr(outer.bg, 'size', a[1]))
-    outer.add_widget(child)
-    return outer
-
-
-def _title_row(text):
-    lbl = Label(text=text, font_size='15sp', bold=True, color=DARK, size_hint_y=None, height='30dp')
-    return lbl
-
-
-def _hint(text):
-    """参数说明文字（灰色小字，滚动显示）"""
-    lbl = Label(text=text, font_size='11sp', color=GRAY, size_hint_y=None, height='30dp',
-                halign='left', valign='middle')
-    lbl.bind(size=lambda *a: setattr(lbl, 'text_size', (lbl.width, None)))
-    return lbl
-
-
-def _row(*widgets, **kw):
-    h = kw.get('height', '40dp')
-    box = BoxLayout(size_hint_y=None, height=h, spacing=8, **kw)
-    for w in widgets: box.add_widget(w)
     return box
 
 
