@@ -32,6 +32,24 @@ jobs:
           # Stage 1: let buildozer download its own SDK (will fail on missing platform, that's OK).
           yes | buildozer android debug 2>&1 | tee /tmp/stage1.log || true
 
+          # ---- Workaround: download.savannah.gnu.org is frequently 502/504 ----
+          # from CI runners, which breaks the freetype recipe download and fails
+          # the whole build. Patch python-for-android's freetype recipe to fetch
+          # from a stable GNU mirror (ftpmirror.gnu.org) instead.
+          P4A_SRC="$PWD/.buildozer/android/platform/python-for-android"
+          if [ -d "$P4A_SRC" ]; then
+            echo "=== Patching freetype recipe URL (savannah -> ftpmirror) ==="
+            find "$P4A_SRC/pythonforandroid/recipes/freetype" -type f -exec grep -l "savannah.gnu.org" {} \; 2>/dev/null | while read -r f; do
+              sed -i 's#https\?://download\.savannah\.gnu\.org/releases/freetype#https://ftpmirror.gnu.org/freetype#g' "$f"
+            done
+            # Drop any half-downloaded freetype so stage2 re-fetches from the mirror.
+            rm -rf "$PWD/.buildozer/android/platform/build-armeabi-v7a/packages/freetype" 2>/dev/null || true
+            echo "--- patched recipe (verify) ---"
+            grep -rn "ftpmirror.gnu.org/freetype" "$P4A_SRC/pythonforandroid/recipes/freetype" 2>/dev/null || echo "  (no freetype recipe file matched)"
+          else
+            echo "!!! p4a source not found at $P4A_SRC (cannot patch freetype URL)"
+          fi
+
           # Locate the SDK buildozer downloaded.
           SDK_DIR=""
           for d in "$PWD/.buildozer/android/platform/android-sdk" /github/home/.buildozer/android/platform/android-sdk; do
