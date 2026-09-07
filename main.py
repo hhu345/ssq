@@ -23,6 +23,7 @@ from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
@@ -33,7 +34,8 @@ from kivy.uix.slider import Slider
 from kivy.uix.popup import Popup
 from kivy.uix.progressbar import ProgressBar
 from kivy.clock import Clock, mainthread
-from kivy.graphics import Color, Rectangle, RoundedRectangle
+from kivy.animation import Animation
+from kivy.graphics import Color, Rectangle, RoundedRectangle, Line, Ellipse, Triangle
 from kivy.metrics import dp
 from kivy.utils import get_color_from_hex
 from kivy.core.window import Window
@@ -1046,39 +1048,77 @@ class FoldPanel(BoxLayout):
         super().__init__(orientation='vertical', size_hint_y=None, **kw)
         self._open = bool(open)
         self._min_h = 0
+        # 面板自身高度跟随内容（原实现锁死 100px 会导致内容溢出）
+        self.bind(minimum_height=lambda o, v: setattr(o, 'height', v))
         box = BoxLayout(orientation='vertical', size_hint_y=None, padding=dp(12), spacing=dp(8))
         box.bind(minimum_height=lambda o, v: setattr(o, 'height', v + dp(24)))
         _bg(box, C('card'), radius=dp(14), shadow=True)
-        head = BoxLayout(orientation='horizontal', size_hint_y=None, height=dp(30), spacing=dp(6))
-        head.add_widget(SectionTitle(title, bare=True) if False else _lbl(title, 15, 'text', bold=True, h=26, size_hint_x=1))
-        self.chev = Icon('chev_down' if self._open else 'chev_right', size_dp=18, color=C('sub'))
-        head.add_widget(Widget())
+        self.box = box
+
+        # 标题行：整行可点（透明按钮铺满，避免只有右侧 1/3 能点）
+        head = FloatLayout(size_hint_y=None, height=dp(34))
+        hl = _lbl(title, 15, 'text', bold=True, h=30, size_hint_x=1)
+        hl.pos_hint = {'x': 0, 'center_y': 0.5}
+        head.add_widget(hl)
+        self.chev = Icon('chev_down' if self._open else 'chev_right', size_dp=18, color=C('sub'),
+                         pos_hint={'right': 1, 'center_y': 0.5})
         head.add_widget(self.chev)
-        head_btn = Button(size_hint=(1, 1), background_color=(0, 0, 0, 0))
+        head_btn = Button(size_hint=(1, 1), pos=(0, 0), background_color=(0, 0, 0, 0))
         head_btn.bind(on_press=self.toggle)
         head.add_widget(head_btn)
         box.add_widget(head)
+
         self.body = BoxLayout(orientation='vertical', size_hint_y=None, height=0, spacing=dp(8))
         self.body.bind(minimum_height=self._on_min)
+        self.body.bind(height=self._defer)
         builder(self.body)
         box.add_widget(self.body)
         self.add_widget(box)
-        Clock.schedule_once(lambda *a: self._apply(instant=True), 0)
+        # 同步立即收起：schedule_once(0) 在 on_enter refresh 等场景会被异常延迟
+        self._apply(instant=True)
+        Clock.schedule_once(lambda *a: self._defer(), 0.05)
 
     def _on_min(self, o, v):
         self._min_h = v
-        if self._open and abs(self.body.height - v) > 0.5:
+        if self._open and self.body.parent is not None and abs(self.body.height - v) > 0.5:
             self.body.height = v
 
+    def _defer(self, *a):
+        """子布局变化后延迟同步自身高度（Kivy 不会因 child 尺寸变化自动重排父级）"""
+        Clock.schedule_once(self._sync_h, 0)
+
+    def _sync_h(self, *a):
+        try:
+            self.box.height = self.box.minimum_height + dp(24)
+            self.height = self.minimum_height
+        except Exception:
+            pass
+
     def _apply(self, instant=False):
-        target = self._min_h if self._open else 0
-        self.body.opacity = 1 if self._open else 0
-        if instant:
-            self.body.height = target
-            self.body.opacity = 1 if self._open else 0
+        if self._open:
+            if self.body.parent is None:
+                self.box.add_widget(self.body)
+            self.body.opacity = 1
+            if instant:
+                self.body.height = self._min_h
+            else:
+                Animation(height=self._min_h, d=0.18, t='out_quad').start(self.body)
         else:
-            Animation(height=target, d=0.18, t='out_quad').start(self.body)
-            Animation(opacity=1 if self._open else 0, d=0.15).start(self.body)
+            if instant or self.body.parent is None:
+                self.body.height = 0
+                self.body.opacity = 0
+                if self.body.parent is not None:
+                    self.box.remove_widget(self.body)
+            else:
+                def _gone(*_a):
+                    self.body.opacity = 0
+                    if self.body.parent is not None:
+                        self.box.remove_widget(self.body)
+                    self._defer()
+                anim = Animation(height=0, d=0.16, t='out_quad')
+                anim.bind(on_complete=_gone)
+                anim.start(self.body)
+        self._defer()
 
     def toggle(self, *a):
         self._open = not self._open
@@ -1192,363 +1232,745 @@ def chart_backtest(strat_g, rand_g):
     return box
 
 
+# -*- coding: utf-8 -*-
+"""改版 UI 块（拼接用，勿直接运行）"""
+
+COMPLIANCE_TEXT = "本工具仅做历史数据统计演示，彩票开奖完全随机，无法预测开奖结果，不构成购彩建议。"
+
+
+def _mix(c1, c2, t):
+    """两色线性插值（t=0 取 c1，t=1 取 c2）"""
+    t = max(0.0, min(1.0, t))
+    return (c1[0] + (c2[0] - c1[0]) * t,
+            c1[1] + (c2[1] - c1[1]) * t,
+            c1[2] + (c2[2] - c1[2]) * t,
+            c1[3] + (c2[3] - c1[3]) * t)
+
+
+def _card(*children, **kw):
+    """卡片容器（修正 padding 双计：minimum_height 已含 padding，仅补 2dp 余量）"""
+    pad = kw.pop('padding', dp(12))
+    sp = kw.pop('spacing', dp(8))
+    radius = kw.pop('radius', 14)
+    fill = kw.pop('fill', None) or C('card')
+    shadow = kw.pop('shadow', True)
+    box = BoxLayout(orientation='vertical', size_hint_y=None, padding=pad, spacing=sp)
+    _bg(box, fill, radius=radius, shadow=shadow)
+
+    def _sync(o, v):
+        o.height = v + dp(2)
+    box.bind(minimum_height=_sync)
+    for ch in children:
+        box.add_widget(ch)
+    Clock.schedule_once(lambda *a: _sync(box, box.minimum_height), 0)
+    return box
+
+
+def _cap(text, kind='red', w=30, h=28, fs=12):
+    """号码胶囊（统一入口）"""
+    return Capsule(text, kind, w=dp(w), h=dp(h), fs=dp(fs))
+
+
+def _kv_row(key, val, key_w=84, fs=12, val_key='text'):
+    """键一行内左右分布的小字信息行"""
+    row = BoxLayout(size_hint_y=None, height=dp(22), spacing=dp(6))
+    row.add_widget(_lbl(str(key), fs, 'hint', h=22, size_hint_x=None, width=dp(key_w)))
+    row.add_widget(_lbl(str(val), fs, val_key, h=22, size_hint_x=1))
+    return row
+
+
+class WrapBox(Widget):
+    """流式换行布局：子控件固定尺寸，按可用宽度自动折行"""
+
+    def __init__(self, spacing=6, line_gap=8, **kw):
+        super().__init__(**kw)
+        self.size_hint_y = None
+        self.height = dp(10)
+        self._sp = dp(spacing)
+        self._gap = dp(line_gap)
+        self.bind(pos=self._relayout, size=self._relayout, children=self._relayout)
+        Clock.schedule_once(lambda *a: self._relayout(), 0)
+
+    def add_widget(self, w, *a, **kw):
+        super().add_widget(w, *a, **kw)
+        w.bind(size=self._relayout)
+        self._relayout()
+
+    def _relayout(self, *a):
+        if getattr(self, '_busy', False):
+            return
+        self._busy = True
+        try:
+            kids = list(reversed(self.children))
+            if not kids:
+                self.height = dp(2)
+                return
+            maxw = self.width or dp(300)
+            x = y = row_h = 0.0
+            for w in kids:
+                ww, wh = w.size
+                if x > 0 and x + ww > maxw:
+                    y += row_h + self._gap
+                    x = 0.0
+                    row_h = 0.0
+                w.pos = (self.x + x, self.y + y)
+                x += ww + self._sp
+                row_h = max(row_h, wh)
+            need = y + row_h + dp(2)
+            if abs(self.height - need) > 0.5:
+                self.height = need
+        finally:
+            self._busy = False
+
+
+class MiniBar(Widget):
+    """胶囊下方的迷你频次条"""
+
+    def __init__(self, ratio=0.0, kind='red', **kw):
+        super().__init__(**kw)
+        self.size_hint = (None, None)
+        self.size = (dp(34), dp(4))
+        self._r = max(0.0, min(1.0, ratio))
+        self._k = kind
+        self.bind(pos=self._redraw, size=self._redraw)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        with self.canvas:
+            Color(*C('card2'))
+            RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(2)])
+            if self._r > 0.01:
+                Color(*C({'red': 'hot', 'blue': 'blue', 'cold': 'cold'}.get(self._k, 'primary')))
+                RoundedRectangle(pos=self.pos,
+                                 size=(max(dp(4), self.width * self._r), self.height),
+                                 radius=[dp(2)])
+
+
+def CapBar(text, ratio, kind='red', w=38, h=30, fs=13):
+    """胶囊号码 + 下方迷你频次条（热号/冷号流式展示用）"""
+    box = BoxLayout(orientation='vertical', size_hint=(None, None),
+                    size=(dp(w), dp(h) + dp(7)), spacing=dp(3))
+    box.add_widget(Capsule(text, kind, w=dp(w), h=dp(h), fs=dp(fs)))
+    box.add_widget(MiniBar(ratio, kind))
+    return box
+
+
+class HeatCell(Button):
+    """热力网格单元：分数越高底色越深"""
+
+    def __init__(self, text, sub, ratio, kind='red', on_press=None, w=46, h=46, **kw):
+        super().__init__(text='', size_hint=(None, None), size=(dp(w), dp(h)),
+                         background_color=(0, 0, 0, 0), **kw)
+        self._ratio = ratio
+        self._kind = kind
+        self._text = str(text)
+        self._sub = str(sub)
+        self.bind(pos=self._redraw, size=self._redraw)
+        if on_press:
+            self.bind(on_press=on_press)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        base = C('card2')
+        top = C('hot') if self._kind == 'red' else C('blue')
+        fill = _mix(base, top, max(0.06, self._ratio))
+        fg = (1, 1, 1, 1) if self._ratio > 0.58 else C('text')
+        with self.canvas:
+            Color(*fill)
+            self._rect = RoundedRectangle(pos=self.pos, size=self.size, radius=[dp(8)])
+        self.text = f"{self._text}\n[size=9]{self._sub}[/size]"
+        self.color = fg
+        self.font_size = dp(12)
+        self.bold = True
+        self.halign = 'center'
+        self.valign = 'middle'
+        self.markup = True
+        self.text_size = self.size
+
+
+class BTBarChart(Widget):
+    """回测柱状对比图：7 个奖级，每级策略 / 随机双柱"""
+
+    def __init__(self, strat=None, rand=None, **kw):
+        super().__init__(**kw)
+        self.size_hint_y = None
+        self.height = dp(156)
+        self._s = strat or {}
+        self._r = rand or {}
+        self.bind(pos=self._redraw, size=self._redraw)
+        Clock.schedule_once(lambda *a: self._redraw(), 0)
+
+    def _redraw(self, *a):
+        self.canvas.clear()
+        if self.width <= 1 or self.height <= 1:
+            return
+        from kivy.core.text import Label as CoreLabel
+        names = ['未中', '六等', '五等', '四等', '三等', '二等', '一等']
+        sx = [self._s.get(i, 0) for i in range(7)]
+        rx = [self._r.get(i, 0) for i in range(7)]
+        vmax = max(max(sx), max(rx), 1)
+        base = self.y + dp(18)
+        top = self.y + self.height - dp(4)
+        plot_h = max(dp(10), top - base)
+        slot = self.width / 7.0
+        bw = max(dp(6), min(dp(12), slot * 0.32))
+        for i in range(7):
+            cx = self.x + slot * (i + 0.5)
+            h1 = (sx[i] / vmax) * plot_h
+            h2 = (rx[i] / vmax) * plot_h
+            with self.canvas:
+                Color(*C('primary'))
+                RoundedRectangle(pos=(cx - bw - dp(1.5), base),
+                                 size=(bw, max(dp(1.5), h1)), radius=[dp(2)])
+                Color(*C('cold'))
+                RoundedRectangle(pos=(cx + dp(1.5), base),
+                                 size=(bw, max(dp(1.5), h2)), radius=[dp(2)])
+                Color(*C('border'))
+                Line(points=[self.x, base, self.right, base], width=1)
+            lab = CoreLabel(text=names[i], font_size=dp(9), color=C('hint'))
+            lab.refresh()
+            tex = lab.texture
+            with self.canvas:
+                Color(1, 1, 1, 1)
+                Rectangle(texture=tex, pos=(cx - tex.width / 2, self.y + dp(4)),
+                          size=(tex.width, tex.height))
+
+
+class TPopup(Popup):
+    """主题化弹窗（圆角卡片 + 主色按钮）"""
+
+    def __init__(self, title='', msg='', **kw):
+        lines = str(msg).count('\n') + 1
+        h = min(dp(320), dp(126) + dp(20) * lines)
+        super().__init__(title=str(title), title_color=C('text'), title_size=dp(14),
+                         title_align='center', separator_color=C('border'),
+                         size_hint=(0.84, None), height=h,
+                         background='', background_color=(0, 0, 0, 0),
+                         auto_dismiss=True, **kw)
+        box = BoxLayout(orientation='vertical', padding=dp(16), spacing=dp(14))
+        lbl = Label(text=str(msg), font_size=dp(13), color=C('sub'),
+                    halign='center', valign='middle')
+        lbl.bind(size=lambda o, v: setattr(o, 'text_size', (v[0], None)))
+        box.add_widget(lbl)
+        box.add_widget(PButton('知道了', kind='primary', h=42, fs=14, on_press=self.dismiss))
+        self.content = box
+        _bg(self, C('card'), radius=dp(16), shadow=True)
+
+
+class ComplianceBar(Label):
+    """底部固定合规小字（不随页面滚动）"""
+
+    def __init__(self, **kw):
+        super().__init__(text=COMPLIANCE_TEXT, font_size=dp(9), color=C('hint'),
+                         size_hint_y=None, height=dp(18), halign='center',
+                         valign='middle', **kw)
+        self.bind(size=lambda o, v: setattr(o, 'text_size', (v[0], v[1])))
+        with self.canvas.before:
+            self._c = Color(*C('bg'))
+            self._r = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._sync, size=self._sync)
+
+    def _sync(self, o, v):
+        self._r.pos = o.pos
+        self._r.size = o.size
+
+
+class _TabItem(FloatLayout):
+    """底部导航单项：图标 + 文字，整格可点"""
+
+    def __init__(self, icon, name, screen, bar, **kw):
+        super().__init__(**kw)
+        self.screen = screen
+        self.bar = bar
+        self.ic = Icon(icon, size_dp=22, color=C('hint'),
+                       pos_hint={'center_x': 0.5, 'center_y': 0.64})
+        self.lb = _lbl(name, 10, 'hint', h=14, halign='center')
+        self.lb.pos_hint = {'center_x': 0.5, 'center_y': 0.2}
+        self.add_widget(self.ic)
+        self.add_widget(self.lb)
+        btn = Button(size_hint=(1, 1), pos=(0, 0), background_color=(0, 0, 0, 0))
+        btn.bind(on_press=self._go)
+        self.add_widget(btn)
+        Clock.schedule_once(lambda *a: self.paint(False), 0)
+
+    def _go(self, *a):
+        if self.bar.sm is not None and self.bar.sm.current != self.screen:
+            self.bar.sm.current = self.screen
+
+    def paint(self, active):
+        col = C('primary') if active else C('hint')
+        self.ic._col = col
+        self.ic._redraw()
+        self.lb.color = col
+        self.lb.bold = bool(active)
+
+
+class BottomBar(BoxLayout):
+    """底部导航栏：纯白轻量化 + 图标文字 tab"""
+
+    _tabs = [('home', '概览', 'overview'), ('chart', '分析', 'analysis'),
+             ('target', '选号', 'generate'), ('loop', '回测', 'backtest'),
+             ('list', '记录', 'records')]
+
+    def __init__(self, sm, **kw):
+        super().__init__(orientation='horizontal', size_hint_y=None, height=dp(58), **kw)
+        self.sm = sm
+        self.items = []
+        for icon, name, scr in self._tabs:
+            it = _TabItem(icon, name, scr, self)
+            self.items.append(it)
+            self.add_widget(it)
+        self.bind(pos=self._paint, size=self._paint)
+        Clock.schedule_once(lambda *a: self.refresh(), 0)
+
+    def _paint(self, *a):
+        self.canvas.before.clear()
+        with self.canvas.before:
+            Color(*C('tab_bg'))
+            Rectangle(pos=self.pos, size=self.size)
+            Color(*C('border'))
+            Line(points=[self.x, self.top, self.right, self.top], width=1)
+
+    def refresh(self, *a):
+        cur = getattr(self.sm, 'current', None)
+        for it in self.items:
+            it.paint(it.screen == cur)
+
+
+# ============================================================
+# 屏幕基类：滚动容器 + 底部留白
+# ============================================================
+
+class BaseScreen(Screen):
+    def _setup(self):
+        self.root = BoxLayout(orientation='vertical')
+        self.scroll = ScrollView(do_scroll_x=False)
+        self.content = BoxLayout(orientation='vertical', size_hint_y=None,
+                                 padding=dp(12), spacing=dp(12))
+        # minimum_height 不含 padding 的全部补偿 + 底部导航避让
+        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + dp(24)))
+        self.scroll.add_widget(self.content)
+        self.root.add_widget(self.scroll)
+        self.add_widget(self.root)
+
+    def _bottom(self, extra=''):
+        """页面底部留白 + 提示"""
+        box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(6))
+        box.bind(minimum_height=box.setter('height'))
+        if extra:
+            box.add_widget(Hint(extra))
+        box.add_widget(Widget(size_hint_y=None, height=dp(52)))
+        return box
+
+    def snapshot(self):
+        return None
+
+    def restore(self, state):
+        pass
+
+
 # ============================================================
 # 屏幕：概览
 # ============================================================
 
-class OverviewScreen(Screen):
-    def __init__(self, dm, **kw):
+class OverviewScreen(BaseScreen):
+    def __init__(self, dm, state=None, **kw):
         super().__init__(**kw)
         self.dm = dm
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
-        self.content = BoxLayout(orientation='vertical', size_hint_y=None, padding=10, spacing=10)
-        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + 24))
-        self.scroll.add_widget(self.content)
-        self.root.add_widget(self.scroll)
-        self.add_widget(self.root)
+        self._setup()
         self.refresh()
+
+    def _toggle_theme(self, *a):
+        app = App.get_running_app()
+        if app is not None and hasattr(app, 'rebuild_theme'):
+            app.rebuild_theme()
+        else:
+            _Theme.toggle()
+            self.refresh()
 
     def refresh(self):
         self.content.clear_widgets()
-        self.content.add_widget(_title_row("最新开奖"))
+
+        head = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
+        head.add_widget(_lbl('双色球', 20, 'text', bold=True, h=34, size_hint_x=1))
+        self.theme_btn = IconBtn('moon' if _Theme.mode == 'light' else 'sun',
+                                 on_press=self._toggle_theme, d=34, icon_size=17)
+        head.add_widget(self.theme_btn)
+        self.content.add_widget(head)
+
         rows = self.dm.get_data(1)
         if rows:
             r = rows[-1]
-            line = BoxLayout(size_hint_y=None, height='52dp', spacing=8)
-            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 1, RED, '40dp'))
-            line.add_widget(_ball_label(f"{r['blue']:02d}", 1, BLUE, '40dp'))
-            self.content.add_widget(line)
+            top = BoxLayout(size_hint_y=None, height=dp(22))
+            top.add_widget(_lbl(f"第 {r['code']} 期", 14, 'text', bold=True, h=22, size_hint_x=1))
+            top.add_widget(_lbl(f"{r.get('date', '')} {r.get('week', '')}", 11, 'hint',
+                                h=22, size_hint_x=None, width=dp(120), halign='right'))
+            ball_row = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(5))
+            for x in r['red']:
+                ball_row.add_widget(_cap(f"{x:02d}", 'red', w=38, h=38, fs=15))
+            ball_row.add_widget(_cap(f"{r['blue']:02d}", 'blue', w=38, h=38, fs=15))
             pz = r.get('prizes', {})
+
             def _pz(t):
                 d = pz.get(str(t), {})
-                return f"{d.get('count', 0)}注/每注{(d.get('money', 0) or 0)//10000}万"
-            info = Label(text=(f"第 {r['code']} 期  {r['date']} {r.get('week', '')}  销售额: {r.get('sales', 0)//10000}万  奖池: {r.get('poolmoney', 0)//10000}万\n"
-                               f"一等奖 {_pz(1)}   二等奖 {_pz(2)}   三等奖 {_pz(3)}"),
-                         size_hint_y=None, height='60dp', color=DARK, font_size='11sp')
-            self.content.add_widget(info)
+                return f"{d.get('count', 0)}注 / {((d.get('money', 0) or 0) // 10000)}万"
+            info = GridLayout(cols=2, size_hint_y=None, height=dp(66), spacing=dp(2))
+            info.add_widget(_lbl('销售额', 11, 'hint', h=20))
+            info.add_widget(_lbl(f"{r.get('sales', 0) // 10000} 万元", 11, 'sub', h=20))
+            info.add_widget(_lbl('奖池', 11, 'hint', h=20))
+            info.add_widget(_lbl(f"{r.get('poolmoney', 0) // 10000} 万元", 11, 'sub', h=20))
+            info.add_widget(_lbl('一等奖', 11, 'hint', h=20))
+            info.add_widget(_lbl(_pz(1), 11, 'sub', h=20))
+            self.content.add_widget(_card(top, ball_row, info))
         else:
-            self.content.add_widget(Label(text="暂无数据", color=GRAY, size_hint_y=None, height='40dp'))
+            self.content.add_widget(_card(_lbl('暂无数据', 13, 'hint', h=40)))
 
-        self.content.add_widget(_title_row("热号 / 冷号"))
-        self.content.add_widget(_hint("热号=近100期红球出现次数最多的前10个；冷号=出现次数最少的前10个（两表互不重复）。蓝球同理。"))
-        rows = self.dm.get_data(100)
-        freq = frequency(rows, "red")
+        rows100 = self.dm.get_data(100)
+        freq = frequency(rows100, 'red')
+        bfreq = frequency(rows100, 'blue')
         hot = sorted(range(1, RED_COUNT + 1), key=lambda i: -freq[i])[:10]
         cold = sorted(range(1, RED_COUNT + 1), key=lambda i: freq[i])[:10]
-        bfreq = frequency(rows, "blue")
         bhot = sorted(range(1, BLUE_COUNT + 1), key=lambda i: -bfreq[i])[:5]
         bcold = sorted(range(1, BLUE_COUNT + 1), key=lambda i: bfreq[i])[:5]
+        fmax = max(freq.values()) or 1
+        bfmax = max(bfreq.values()) or 1
 
-        self.content.add_widget(_hint("红球热号（出现最多）"))
-        hbox = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
-        for x in hot: hbox.add_widget(_ball_label(f"{x:02d}", 1, RED, '36dp'))
-        self.content.add_widget(hbox)
+        hot_box = WrapBox(spacing=6, line_gap=8)
+        for x in hot:
+            hot_box.add_widget(CapBar(f"{x:02d}", freq[x] / fmax, 'red'))
+        cold_box = WrapBox(spacing=6, line_gap=8)
+        for x in cold:
+            cold_box.add_widget(CapBar(f"{x:02d}", freq[x] / fmax, 'cold'))
+        bhot_box = WrapBox(spacing=6, line_gap=8)
+        for x in bhot:
+            bhot_box.add_widget(CapBar(f"{x:02d}", bfreq[x] / bfmax, 'blue'))
+        bcold_box = WrapBox(spacing=6, line_gap=8)
+        for x in bcold:
+            bcold_box.add_widget(CapBar(f"{x:02d}", bfreq[x] / bfmax, 'cold'))
 
-        self.content.add_widget(_hint("红球冷号（出现最少）"))
-        hbox2 = GridLayout(cols=6, size_hint_y=None, height='96dp', spacing=3)
-        for x in cold: hbox2.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1), '36dp'))
-        self.content.add_widget(hbox2)
+        self.content.add_widget(_card(
+            SectionTitle('热号 / 冷号'),
+            Hint('按近 100 期出现次数排序，胶囊下方细条表示该号出现频次。'),
+            _lbl('红球热号', 12, 'sub', bold=True, h=20), hot_box,
+            _lbl('红球冷号', 12, 'sub', bold=True, h=20), cold_box,
+            _lbl('蓝球热号', 12, 'sub', bold=True, h=20), bhot_box,
+            _lbl('蓝球冷号', 12, 'sub', bold=True, h=20), bcold_box,
+        ))
 
-        self.content.add_widget(_hint("蓝球热号（左5，蓝）/ 冷号（右5，灰）"))
-        bline = GridLayout(cols=10, size_hint_y=None, height='40dp', spacing=3)
-        for x in bhot: bline.add_widget(_ball_label(f"{x:02d}", 1, BLUE, '30dp'))
-        for x in bcold: bline.add_widget(_ball_label(f"{x:02d}", 1, (0.5, 0.5, 0.5, 1), '30dp'))
-        self.content.add_widget(bline)
-
-        # 历史开奖（从分析页移入概览，图表仅在分析页展示）
-        self.content.add_widget(_title_row("历史开奖"))
         allrows = self.dm.get_data(100000)
-        shown = allrows[-min(15, len(allrows)):]
-        hist = BoxLayout(orientation='vertical', size_hint_y=None,
-                         height=len(shown) * 36 + 10, spacing=2)
+        shown = allrows[-min(12, len(allrows)):]
+        hist = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(6))
         hist.bind(minimum_height=hist.setter('height'))
         for hr in reversed(shown):
-            hline = BoxLayout(size_hint_y=None, height='34dp', spacing=3)
-            hline.add_widget(Label(text=f"{hr['code']}", size_hint_x=None, width='70dp',
-                                    height='30dp', font_size='9sp', color=DARK))
-            for x in hr["red"]: hline.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '26dp'))
-            hline.add_widget(_ball_label(f"{hr['blue']:02d}", 0.8, BLUE, '26dp'))
-            hist.add_widget(hline)
-        self.content.add_widget(hist)
+            line = BoxLayout(size_hint_y=None, height=dp(26), spacing=dp(4))
+            line.add_widget(_lbl(f"{hr['code']}", 10, 'hint', h=26,
+                                 size_hint_x=None, width=dp(62)))
+            for x in hr['red']:
+                line.add_widget(_cap(f"{x:02d}", 'red', w=26, h=24, fs=11))
+            line.add_widget(_cap(f"{hr['blue']:02d}", 'blue', w=26, h=24, fs=11))
+            hist.add_widget(line)
+        if not shown:
+            hist.add_widget(_lbl('暂无历史数据', 12, 'hint', h=30))
+        self.content.add_widget(_card(SectionTitle('历史开奖'), hist))
 
-        self.content.add_widget(Label(size_hint_y=None, height='40dp'))
-        self.content.add_widget(Label(text="策略不提高中奖概率，理性购彩", size_hint_y=None, height='30dp',
-                                       color=GRAY, font_size='11sp', halign='center'))
+        self.content.add_widget(self._bottom('策略不提高中奖概率，理性购彩。'))
 
 
 # ============================================================
 # 屏幕：分析
 # ============================================================
 
-class AnalysisScreen(Screen):
-    def __init__(self, dm, **kw):
+class AnalysisScreen(BaseScreen):
+    def __init__(self, dm, state=None, **kw):
         super().__init__(**kw)
         self.dm = dm
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
-        self.content = BoxLayout(orientation='static', size_hint_y=None, padding=10, spacing=10) if False else \
-            BoxLayout(orientation='vertical', size_hint_y=None, padding=10, spacing=10)
-        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + 24))
-        self.scroll.add_widget(self.content)
-        self.root.add_widget(self.scroll)
-        self.add_widget(self.root)
+        self._n = 100
+        self._setup()
+        if state:
+            self._n = int(state.get('n', 100))
         self.refresh()
+
+    def snapshot(self):
+        return {'n': self._n}
+
+    def restore(self, state):
+        if state:
+            self._n = int(state.get('n', 100))
 
     def refresh(self):
         self.content.clear_widgets()
-        n_sp = Spinner(text="100", values=[str(i) for i in range(50, 1001, 50)],
-                       size_hint_x=0.3, height='40dp', pos_hint={'center_y': 0.5})
-        btn = Button(text="刷新数据", size_hint_x=0.2, height='40dp',
-                     pos_hint={'center_y': 0.5}, background_color=BLUE, color=(1, 1, 1, 1))
-        top = BoxLayout(size_hint_y=None, height='44dp', spacing=8)
-        top.add_widget(Label(text="期数:", size_hint_x=0.15, height='40dp', pos_hint={'center_y': 0.5}))
-        top.add_widget(n_sp)
-        top.add_widget(btn)
-        self.content.add_widget(top)
+        row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
+        row.add_widget(_lbl('统计期数', 13, 'sub', h=42, size_hint_x=None, width=dp(74)))
+        self.n_spin = TSpinner(text=str(self._n),
+                               values=[str(i) for i in range(50, 1001, 50)],
+                               size_hint_y=None, height=dp(42))
+        row.add_widget(self.n_spin)
+        row.add_widget(PButton('刷新', kind='soft', h=42, fs=13, size_hint_x=None,
+                               width=dp(74), on_press=self._on_refresh))
+        self.content.add_widget(_card(row))
+        self._build(self._n)
 
-        def on_refresh(*args):
-            n = int(n_sp.text)
-            rows = self.dm.get_data(n)
-            self._build(rows, n)
+    def _on_refresh(self, *a):
+        try:
+            self._n = int(self.n_spin.text)
+        except Exception:
+            self._n = 100
+        self._build(self._n)
 
-        btn.bind(on_press=on_refresh)
-        rows = self.dm.get_data(100)
-        self._build(rows, 100)
-
-    def _build(self, rows, n):
-        self.content.clear_widgets()
-        # 保留顶部栏
-        n_sp = Spinner(text=str(n), values=[str(i) for i in range(50, 1001, 50)],
-                       size_hint_x=0.3, height='40dp', pos_hint={'center_y': 0.5})
-        btn = Button(text="刷新数据", size_hint_x=0.2, height='40dp',
-                     pos_hint={'center_y': 0.5}, background_color=BLUE, color=(1, 1, 1, 1))
-        top = BoxLayout(size_hint_y=None, height='44dp', spacing=8)
-        top.add_widget(Label(text="期数:", size_hint_x=0.15, height='40dp', pos_hint={'center_y': 0.5}))
-        top.add_widget(n_sp)
-        top.add_widget(btn)
-        self.content.add_widget(top)
-
-        def on_refresh(*args):
-            n2 = int(n_sp.text)
-            rows2 = self.dm.get_data(n2)
-            self._build(rows2, n2)
-        btn.bind(on_press=on_refresh)
-
+    def _build(self, n):
+        rows = self.dm.get_data(n)
+        if not rows:
+            self.content.add_widget(_card(_lbl('暂无数据', 13, 'hint', h=40)))
+            return
         red_sc, rs = red_scores(rows)
         bsc, bs = blue_scores(rows)
+        rmax = max(red_sc.values()) or 1
+        bmax = max(bsc.values()) or 1
+        tail = rs['tail']
+        omit = rs['omit']
+        frq = rs['freq']
 
-        self.content.add_widget(_title_row(f"红球综合评分（近 {n} 期）"))
-        self.content.add_widget(Label(text=f"权重: 频率{W_FREQ} + 遗漏{W_OMIT} + 尾数{W_TAIL} + 区间{W_ZONE}",
-                                       size_hint_y=None, height='28dp', color=GRAY, font_size='11sp'))
+        def _detail(i):
+            TPopup(f"红球 {i:02d}",
+                   f"综合评分：{red_sc[i]:.3f}\n"
+                   f"出现次数：{frq.get(i, 0)} 次\n"
+                   f"当前遗漏：{omit.get(i, 0)} 期\n"
+                   f"尾数频率：{tail.get(i % 10, 0)} 次\n"
+                   f"所属区间：第 {(i - 1) // 11 + 1} 区\n"
+                   f"近 {n} 期统计").open()
+            return None
 
-        score_grid = GridLayout(cols=8, size_hint_y=None, height='250dp', spacing=3)
+        rgrid = GridLayout(cols=6, size_hint_y=None, spacing=dp(6))
+        rgrid.bind(minimum_height=rgrid.setter('height'))
         for i in range(1, RED_COUNT + 1):
-            v = red_sc[i]
-            mx = max(red_sc.values())
-            ratio = v / mx if mx else 0
-            r = int(ratio * 231)
-            g = int((1 - ratio) * 52)
-            b = 0
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='11sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('40dp', '42dp'), halign='center', valign='middle')
-            with lbl.canvas.before:
-                Color(r / 255, g / 255, b, 1)
-                lbl.bg_r = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a, l=lbl: setattr(l.bg_r, 'pos', a[1]),
-                     size=lambda *a, l=lbl: setattr(l.bg_r, 'size', a[1]))
-            score_grid.add_widget(lbl)
-        self.content.add_widget(score_grid)
+            rgrid.add_widget(HeatCell(f"{i:02d}", f"{red_sc[i]:.2f}", red_sc[i] / rmax,
+                                      'red', on_press=lambda *a, x=i: _detail(x)))
+        self.content.add_widget(_card(
+            SectionTitle(f"红球评分（近 {n} 期）"),
+            Hint(f"权重 频率{W_FREQ} + 遗漏{W_OMIT} + 尾数{W_TAIL} + 区间{W_ZONE}，颜色越深分数越高，点击格子看详情。"),
+            rgrid,
+        ))
 
-        self.content.add_widget(_title_row("蓝球评分"))
-        bline = GridLayout(cols=8, size_hint_y=None, height='110dp', spacing=3)
+        bgrid = GridLayout(cols=6, size_hint_y=None, spacing=dp(6))
+        bgrid.bind(minimum_height=bgrid.setter('height'))
         for i in range(1, BLUE_COUNT + 1):
-            v = bsc[i]
-            mx = max(bsc.values())
-            ratio = v / mx if mx else 0
-            g = int((1 - ratio) * 150)
-            lbl = Label(text=f"{i:02d}\n{v:.2f}", font_size='11sp', color=(1, 1, 1, 1),
-                        size_hint=(None, None), size=('40dp', '42dp'), halign='center', valign='middle')
-            with lbl.canvas.before:
-                Color(0.2, g / 255, 0.9, 1)
-                lbl.bg_b = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[4])
-            lbl.bind(pos=lambda *a, l=lbl: setattr(l.bg_b, 'pos', a[1]),
-                     size=lambda *a, l=lbl: setattr(l.bg_b, 'size', a[1]))
-            bline.add_widget(lbl)
-        self.content.add_widget(bline)
+            bgrid.add_widget(HeatCell(f"{i:02d}", f"{bsc[i]:.2f}", bsc[i] / bmax, 'blue'))
+        self.content.add_widget(_card(SectionTitle('蓝球评分'), bgrid))
 
-        self.content.add_widget(_title_row("图表"))
-        charts = []
-        try:
-            charts.append(("频率", chart_freq(rs["freq"])))
-            charts.append(("遗漏", chart_omit(rs["omit"])))
-            charts.append(("尾数", chart_tail_freq(rs["tail"])))
-            charts.append(("区间", chart_zone_freq(rs["zone"])))
-            charts.append(("蓝球频率", chart_blue_freq(bs["freq"])))
-        except Exception as e:
-            print(f"图表失败: {e}")
-        for name, p in charts:
-            if p:
-                self.content.add_widget(p)
+        for maker in (lambda: chart_freq(rs['freq']),
+                      lambda: chart_omit(rs['omit']),
+                      lambda: chart_tail_freq(rs['tail']),
+                      lambda: chart_zone_freq(rs['zone']),
+                      lambda: chart_blue_freq(bs['freq'])):
+            try:
+                p = maker()
+                if p:
+                    self.content.add_widget(_card(p))
+            except Exception as e:
+                print(f"[图表跳过] {e}")
 
-        # 最新开奖
-        self.content.add_widget(_title_row("历史开奖"))
-        shown = rows[-min(20, len(rows)):]
-        hist_grid = BoxLayout(orientation='vertical', size_hint_y=None,
-                              height=len(shown) * 36 + 10, spacing=2)
-        hist_grid.bind(minimum_height=hist_grid.setter('height'))
-        for r in reversed(shown):
-            line = BoxLayout(size_hint_y=None, height='34dp', spacing=3)
-            line.add_widget(Label(text=f"{r['code']}", size_hint_x=None, width="70dp", height='30dp', font_size='9sp', color=DARK))
-            for x in r["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.8, RED, '26dp'))
-            line.add_widget(_ball_label(f"{r['blue']:02d}", 0.8, BLUE, '26dp'))
-            hist_grid.add_widget(line)
-        self.content.add_widget(hist_grid)
-        self.content.add_widget(Label(size_hint_y=None, height='50dp'))
+        shown = rows[-min(15, len(rows)):]
+        hist = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(6))
+        hist.bind(minimum_height=hist.setter('height'))
+        for hr in reversed(shown):
+            line = BoxLayout(size_hint_y=None, height=dp(26), spacing=dp(4))
+            line.add_widget(_lbl(f"{hr['code']}", 10, 'hint', h=26,
+                                 size_hint_x=None, width=dp(62)))
+            for x in hr['red']:
+                line.add_widget(_cap(f"{x:02d}", 'red', w=26, h=24, fs=11))
+            line.add_widget(_cap(f"{hr['blue']:02d}", 'blue', w=26, h=24, fs=11))
+            hist.add_widget(line)
+        self.content.add_widget(_card(SectionTitle('历史开奖'), hist))
+        self.content.add_widget(self._bottom())
 
 
 # ============================================================
 # 屏幕：选号
 # ============================================================
 
-class GenerateScreen(Screen):
-    def __init__(self, dm, **kw):
+class GenerateScreen(BaseScreen):
+    def __init__(self, dm, state=None, **kw):
         super().__init__(**kw)
         self.dm = dm
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
-        self.content = BoxLayout(orientation='vertical', size_hint_y=None, padding=10, spacing=10)
-        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + 24))
-        self.scroll.add_widget(self.content)
-        self.root.add_widget(self.scroll)
-        self.add_widget(self.root)
+        self._last_tickets = []
+        self._setup()
         self._build()
+        if state:
+            self.restore(state)
+
+    def snapshot(self):
+        return {
+            'play': self.play_spinner.text,
+            'w': [self.w_freq_s.value, self.w_omit_s.value, self.w_tail_s.value, self.w_zone_s.value],
+            'cons': [self.c_sum.text, self.c_odd.text, self.c_big.text,
+                     self.c_span.text, self.c_consec.text, self.c_zone.text],
+            'tickets': self.tickets_spin.text,
+            'n': self.n_spin.text,
+            'fold': self.fold_cons._open,
+        }
+
+    def restore(self, state):
+        if not state:
+            return
+        try:
+            if state.get('play') in self.play_spinner.values:
+                self.play_spinner.text = state['play']
+            w = state.get('w') or []
+            for s, v in zip((self.w_freq_s, self.w_omit_s, self.w_tail_s, self.w_zone_s), w):
+                s.value = float(v)
+            c = state.get('cons') or []
+            for ti, v in zip((self.c_sum, self.c_odd, self.c_big, self.c_span,
+                              self.c_consec, self.c_zone), c):
+                ti.text = str(v)
+            if state.get('tickets') in self.tickets_spin.values:
+                self.tickets_spin.text = state['tickets']
+            if state.get('n') in self.n_spin.values:
+                self.n_spin.text = state['n']
+            self._sync_weights()
+            f = state.get('fold')
+            if f and not self.fold_cons._open:
+                self.fold_cons.toggle()
+        except Exception as e:
+            print(f"[选号状态恢复失败] {e}")
+
+    def _sync_weights(self):
+        vals = [self.w_freq_s.value, self.w_omit_s.value, self.w_tail_s.value, self.w_zone_s.value]
+        for lbl, v in zip((self.w_freq_l, self.w_omit_l, self.w_tail_l, self.w_zone_l), vals):
+            lbl.text = f"{v:.2f}"
+        tot = sum(vals) or 1.0
+        self.mix.update(vals)
+        pct = [v / tot * 100 for v in vals]
+        self.mix_lbl.text = "  ·  ".join(
+            f"{nm} {p:.0f}%" for nm, p in zip(('频率', '遗漏', '尾数', '区间'), pct))
+
+    def _mk_weight_row(self, name, init):
+        row = BoxLayout(size_hint_y=None, height=dp(34), spacing=dp(8))
+        row.add_widget(_lbl(name, 13, 'sub', h=34, size_hint_x=None, width=dp(38)))
+        s = SoftSlider(value=init, vmin=0.0, vmax=1.0, on_change=lambda v: self._sync_weights())
+        row.add_widget(s)
+        lab = _lbl(f"{init:.2f}", 12, 'text', h=34, size_hint_x=None, width=dp(40),
+                   halign='right')
+        row.add_widget(lab)
+        return row, s, lab
+
+    def _build_constraints(self, body):
+        body.add_widget(Hint('和值=6 红球之和；奇数=红球奇数个数；大号=≥18 的个数；跨度=最大-最小；最长连号；单区最多号数（01-11 / 12-22 / 23-33）。'))
+        body.add_widget(Hint('建议：和值 90-120，奇数 2-4，大号 2-4，跨度 15-30，最长连号 ≤3，单区最多 ≤4。'))
+        grid = GridLayout(cols=2, size_hint_y=None, spacing=dp(8))
+        grid.bind(minimum_height=grid.setter('height'))
+        self.c_sum = TInput(text=f"{SUM_RANGE[0]}-{SUM_RANGE[1]}", hint='和值区间')
+        self.c_odd = TInput(text=f"{ODD_RANGE[0]}-{ODD_RANGE[1]}", hint='奇数个数')
+        self.c_big = TInput(text=f"{BIG_RANGE[0]}-{BIG_RANGE[1]}", hint='大号个数(≥18)')
+        self.c_span = TInput(text=f"{SPAN_RANGE[0]}-{SPAN_RANGE[1]}", hint='跨度区间')
+        self.c_consec = TInput(text=str(MAX_CONSEC), hint='最长连号')
+        self.c_zone = TInput(text=str(ZONE_MAX_IN_ONE), hint='单区最多号数')
+        for w in (self.c_sum, self.c_odd, self.c_big, self.c_span, self.c_consec, self.c_zone):
+            grid.add_widget(w)
+        body.add_widget(grid)
 
     def _build(self):
         self.content.clear_widgets()
-        self.content.add_widget(_title_row("玩法"))
-        self.play_spinner = Spinner(text="单式", values=["单式", "红球复式", "蓝球复式", "全复式"],
-                                     size_hint_x=0.5, height='40dp')
-        self.content.add_widget(_row(self.play_spinner))
 
-        self.content.add_widget(_title_row("权重设置"))
-        self.content.add_widget(_hint("四项权重建议 0.3/0.35/0.2/0.15（合计≈1），滑动可调，越接近 1 越均衡。"))
-        w_grid = GridLayout(cols=2, size_hint_y=None, height='160dp', spacing=5)
-        self.w_freq_s = Slider(min=0, max=1, value=W_FREQ, size_hint_x=0.7)
-        self.w_freq_l = Label(text=f"频率: {W_FREQ}", size_hint_x=0.3, height='30dp', color=DARK)
-        self.w_freq_s.bind(value=lambda *a: setattr(self.w_freq_l, 'text', f"频率: {a[1]:.2f}"))
-        w_grid.add_widget(self.w_freq_l); w_grid.add_widget(self.w_freq_s)
+        self.play_spinner = TSpinner(text='单式',
+                                     values=['单式', '红球复式', '蓝球复式', '全复式'],
+                                     size_hint_y=None, height=dp(42))
+        self.content.add_widget(_card(
+            SectionTitle('玩法'),
+            self.play_spinner,
+            Hint('单式=每注 6 红 + 1 蓝；红球复式=8 红 + 1 蓝；蓝球复式=6 红 + 3 蓝；全复式=8 红 + 3 蓝。'),
+        ))
 
-        self.w_omit_s = Slider(min=0, max=1, value=W_OMIT, size_hint_x=0.7)
-        self.w_omit_l = Label(text=f"遗漏: {W_OMIT}", size_hint_x=0.3, height='30dp', color=DARK)
-        self.w_omit_s.bind(value=lambda *a: setattr(self.w_omit_l, 'text', f"遗漏: {a[1]:.2f}"))
-        w_grid.add_widget(self.w_omit_l); w_grid.add_widget(self.w_omit_s)
+        self.mix = MixBar()
+        self.mix_lbl = _lbl('', 10, 'hint', h=16, halign='center')
+        self.w_row1, self.w_freq_s, self.w_freq_l = self._mk_weight_row('频率', W_FREQ)
+        self.w_row2, self.w_omit_s, self.w_omit_l = self._mk_weight_row('遗漏', W_OMIT)
+        self.w_row3, self.w_tail_s, self.w_tail_l = self._mk_weight_row('尾数', W_TAIL)
+        self.w_row4, self.w_zone_s, self.w_zone_l = self._mk_weight_row('区间', W_ZONE)
 
-        self.w_tail_s = Slider(min=0, max=1, value=W_TAIL, size_hint_x=0.7)
-        self.w_tail_l = Label(text=f"尾数: {W_TAIL}", size_hint_x=0.3, height='30dp', color=DARK)
-        self.w_tail_s.bind(value=lambda *a: setattr(self.w_tail_l, 'text', f"尾数: {a[1]:.2f}"))
-        w_grid.add_widget(self.w_tail_l); w_grid.add_widget(self.w_tail_s)
+        def _reset(*a):
+            for s, v in zip((self.w_freq_s, self.w_omit_s, self.w_tail_s, self.w_zone_s),
+                            (W_FREQ, W_OMIT, W_TAIL, W_ZONE)):
+                s.value = v
+            self._sync_weights()
+            Toast('已恢复默认权重')
 
-        self.w_zone_s = Slider(min=0, max=1, value=W_ZONE, size_hint_x=0.7)
-        self.w_zone_l = Label(text=f"区间: {W_ZONE}", size_hint_x=0.3, height='30dp', color=DARK)
-        self.w_zone_s.bind(value=lambda *a: setattr(self.w_zone_l, 'text', f"区间: {a[1]:.2f}"))
-        w_grid.add_widget(self.w_zone_l); w_grid.add_widget(self.w_zone_s)
-        self.content.add_widget(w_grid)
-        reset_btn = Button(text="权重恢复默认 (0.30/0.35/0.20/0.15)", size_hint_y=None, height='38dp',
-                            background_color=BLUE, color=(1, 1, 1, 1), font_size='12sp')
-        def _reset_w(*a):
-            self.w_freq_s.value = W_FREQ
-            self.w_omit_s.value = W_OMIT
-            self.w_tail_s.value = W_TAIL
-            self.w_zone_s.value = W_ZONE
-            self.w_freq_l.text = f"频率: {W_FREQ}"
-            self.w_omit_l.text = f"遗漏: {W_OMIT}"
-            self.w_tail_l.text = f"尾数: {W_TAIL}"
-            self.w_zone_l.text = f"区间: {W_ZONE}"
-        reset_btn.bind(on_press=_reset_w)
-        self.content.add_widget(reset_btn)
+        self.content.add_widget(_card(
+            SectionTitle('权重设置'),
+            self.mix,
+            self.mix_lbl,
+            self.w_row1, self.w_row2, self.w_row3, self.w_row4,
+            PButton('恢复默认 (0.30/0.35/0.20/0.15)', kind='ghost', h=40, fs=12,
+                    on_press=_reset),
+        ))
+        Clock.schedule_once(lambda *a: self._sync_weights(), 0)
 
-        self.content.add_widget(_title_row("约束条件"))
-        self.content.add_widget(_hint("和值=6红球和；奇数=红球奇数个数；大号=≥18的个数；跨度=最大-最小；最长连号；单区最多号数(01-11/12-22/23-33区)。"))
-        self.content.add_widget(_hint("建议值：和值 90-120（均值≈100）；奇数 2-4；大号 2-4；跨度 15-30；最长连号 ≤3；单区最多 ≤4。"))
-        c_grid = GridLayout(cols=2, size_hint_y=None, height='200dp', spacing=5)
-        self.c_sum = TextInput(text=f"{SUM_RANGE[0]}-{SUM_RANGE[1]}", multiline=False,
-                                hint_text="和值区间", size_hint_x=1, height='36dp')
-        self.c_odd = TextInput(text=f"{ODD_RANGE[0]}-{ODD_RANGE[1]}", multiline=False,
-                                hint_text="奇数个数", size_hint_x=1, height='36dp')
-        self.c_big = TextInput(text=f"{BIG_RANGE[0]}-{BIG_RANGE[1]}", multiline=False,
-                                hint_text="大号个数(>=18)", size_hint_x=1, height='36dp')
-        self.c_span = TextInput(text=f"{SPAN_RANGE[0]}-{SPAN_RANGE[1]}", multiline=False,
-                                 hint_text="跨度区间", size_hint_x=1, height='36dp')
-        self.c_consec = TextInput(text=str(MAX_CONSEC), multiline=False,
-                                   hint_text="最长连号", size_hint_x=1, height='36dp')
-        self.c_zone = TextInput(text=str(ZONE_MAX_IN_ONE), multiline=False,
-                                 hint_text="单区最多号数", size_hint_x=1, height='36dp')
-        for w in [self.c_sum, self.c_odd, self.c_big, self.c_span, self.c_consec, self.c_zone]:
-            c_grid.add_widget(w)
-        self.content.add_widget(c_grid)
+        self.fold_cons = FoldPanel('约束条件', self._build_constraints, open=False)
+        self.content.add_widget(self.fold_cons)
 
-        self.content.add_widget(_title_row("生成设置"))
-        self.tickets_spin = Spinner(text="5", values=[str(i) for i in range(1, 21)],
-                                     size_hint_x=0.3, height='40dp')
-        self.n_spin = Spinner(text="100", values=[str(i) for i in range(50, 1001, 50)],
-                               size_hint_x=0.3, height='40dp')
-        self.content.add_widget(_row(Label(text="注数:", height='40dp', color=DARK), self.tickets_spin,
-                                      Label(text="期数:", height='40dp', color=DARK), self.n_spin))
+        row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
+        row.add_widget(_lbl('注数', 13, 'sub', h=42, size_hint_x=None, width=dp(38)))
+        self.tickets_spin = TSpinner(text='5', values=[str(i) for i in range(1, 21)],
+                                     size_hint_y=None, height=dp(42))
+        row.add_widget(self.tickets_spin)
+        row.add_widget(_lbl('期数', 13, 'sub', h=42, size_hint_x=None, width=dp(38)))
+        self.n_spin = TSpinner(text='100', values=[str(i) for i in range(50, 1001, 50)],
+                               size_hint_y=None, height=dp(42))
+        row.add_widget(self.n_spin)
+        self.content.add_widget(_card(SectionTitle('生成设置'), row,
+                                      Hint('期数=参与统计的历史期数，注数=单式玩法生成的注数。')))
 
-        self.gen_btn = Button(text="开始选号", size_hint_y=None, height='50dp',
-                               background_color=ACCENT, color=(1, 1, 1, 1), font_size='18sp')
-        self.gen_btn.bind(on_press=self._generate)
+        self.gen_btn = PButton('开始选号', kind='primary', h=50, fs=16, on_press=self._generate)
         self.content.add_widget(self.gen_btn)
 
-        self.result_box = BoxLayout(orientation='vertical', size_hint_y=None, height='10dp', spacing=5)
+        self.result_box = BoxLayout(orientation='vertical', size_hint_y=None,
+                                    height=dp(10), spacing=dp(8))
         self.result_box.bind(minimum_height=self.result_box.setter('height'))
         self.content.add_widget(self.result_box)
-
-        self.content.add_widget(Label(size_hint_y=None, height='60dp'))
+        self.content.add_widget(self._bottom('生成结果仅供参考，不构成购彩建议。'))
 
     def _get_constraints(self):
         def _parse_range(s):
-            parts = s.split('-')
-            return (int(parts[0]), int(parts[1])) if len(parts) == 2 else None
+            parts = str(s).split('-')
+            try:
+                return (int(parts[0]), int(parts[1])) if len(parts) == 2 else None
+            except Exception:
+                return None
         cons = {}
-        v = self.c_sum.text
-        if '-' in v:
-            r = _parse_range(v)
-            if r: cons['sum_range'] = r
-        v = self.c_odd.text
-        if '-' in v:
-            r = _parse_range(v)
-            if r: cons['odd_range'] = r
-        v = self.c_big.text
-        if '-' in v:
-            r = _parse_range(v)
-            if r: cons['big_range'] = r
-        v = self.c_span.text
-        if '-' in v:
-            r = _parse_range(v)
-            if r: cons['span_range'] = r
-        try: cons['max_consec'] = int(self.c_consec.text)
-        except: pass
-        try: cons['zone_max'] = int(self.c_zone.text)
-        except: pass
+        for key, val in (('sum_range', self.c_sum.text), ('odd_range', self.c_odd.text),
+                         ('big_range', self.c_big.text), ('span_range', self.c_span.text)):
+            if '-' in str(val):
+                r = _parse_range(val)
+                if r:
+                    cons[key] = r
+        try:
+            cons['max_consec'] = int(self.c_consec.text)
+        except Exception:
+            pass
+        try:
+            cons['zone_max'] = int(self.c_zone.text)
+        except Exception:
+            pass
         return cons
 
     def _generate(self, *args):
         self.gen_btn.disabled = True
-        self.gen_btn.text = "生成中..."
+        self.gen_btn.text = '生成中...'
         self.result_box.clear_widgets()
 
         def _do():
-            play = {"单式": "single", "红球复式": "red_dup", "蓝球复式": "blue_dup", "全复式": "full_dup"}[self.play_spinner.text]
-            rw = {"w_freq": self.w_freq_s.value, "w_omit": self.w_omit_s.value,
-                  "w_tail": self.w_tail_s.value, "w_zone": self.w_zone_s.value}
+            play = {'单式': 'single', '红球复式': 'red_dup',
+                    '蓝球复式': 'blue_dup', '全复式': 'full_dup'}[self.play_spinner.text]
+            rw = {'w_freq': self.w_freq_s.value, 'w_omit': self.w_omit_s.value,
+                  'w_tail': self.w_tail_s.value, 'w_zone': self.w_zone_s.value}
             cons = self._get_constraints()
             n = int(self.n_spin.text)
             rows = self.dm.get_data(n)
             red_sc, _ = red_scores(rows, **rw)
             bsc, _ = blue_scores(rows)
-            blues = list(bsc.keys()); bweights = [bsc[x] + 1e-6 for x in blues]
+            blues = list(bsc.keys())
+            bweights = [bsc[x] + 1e-6 for x in blues]
 
             def pick_blue():
                 return random.choices(blues, weights=bweights, k=1)[0]
@@ -1558,20 +1980,20 @@ class GenerateScreen(Screen):
                 tickets = []
                 for r in combinations(sorted(reds), 6):
                     for b in blues_list:
-                        tickets.append({"red": [int(x) for x in r], "blue": int(b)})
+                        tickets.append({'red': [int(x) for x in r], 'blue': int(b)})
                 return tickets
 
-            if play == "single":
+            if play == 'single':
                 ntk = int(self.tickets_spin.text)
                 result = []
                 for _ in range(ntk):
                     reds = draw_weighted(red_sc, RED_PICK, **cons)
-                    result.append({"red": reds, "blue": pick_blue()})
-            elif play == "red_dup":
+                    result.append({'red': reds, 'blue': pick_blue()})
+            elif play == 'red_dup':
                 reds = draw_n(red_sc, 8)
                 blue = pick_blue()
                 result = expand(reds, [blue])
-            elif play == "blue_dup":
+            elif play == 'blue_dup':
                 reds = draw_weighted(red_sc, RED_PICK, **cons)
                 blues_sel = sorted(int(x) for x in draw_n(bsc, 3))
                 result = expand(reds, blues_sel)
@@ -1585,26 +2007,26 @@ class GenerateScreen(Screen):
                 self._last_tickets = result
                 self.result_box.clear_widgets()
                 rec_code = self.dm.next_code()
-                self.result_box.add_widget(_title_row(f"第 {rec_code} 期 · 生成 {len(result)} 注（可上下滚动）"))
+                self.result_box.add_widget(
+                    SectionTitle(f"第 {rec_code} 期 · 共 {len(result)} 注"))
                 for i, t in enumerate(result):
-                    line = BoxLayout(size_hint_y=None, height='40dp', spacing=4)
-                    line.add_widget(Label(text=f"{i + 1:02d}", size_hint_x=None, width='36dp', size_hint_y=None,
-                                          height='34dp', font_size='12sp', color=DARK))
-                    for x in t["red"]: line.add_widget(_ball_label(f"{x:02d}", 0.9, RED, '28dp'))
-                    line.add_widget(_ball_label(f"{t['blue']:02d}", 0.9, BLUE, '28dp'))
-                    save_btn = Button(text="存", size_hint_x=None, width='44dp', size_hint_y=None,
-                                      height='32dp', font_size='13sp', background_color=ACCENT, color=(1, 1, 1, 1))
-                    save_btn.bind(on_press=lambda *a, tt=t: self._save_ticket(tt))
-                    line.add_widget(save_btn)
+                    line = BoxLayout(size_hint_y=None, height=dp(38), spacing=dp(4))
+                    line.add_widget(_lbl(f"{i + 1:02d}", 12, 'hint', h=38,
+                                         size_hint_x=None, width=dp(26)))
+                    for x in t['red']:
+                        line.add_widget(_cap(f"{x:02d}", 'red', w=28, h=28, fs=12))
+                    line.add_widget(_cap(f"{t['blue']:02d}", 'blue', w=28, h=28, fs=12))
+                    line.add_widget(PButton('存入', kind='soft', h=32, fs=11,
+                                            size_hint_x=None, width=dp(50),
+                                            on_press=lambda *a, tt=t: self._save_ticket(tt)))
                     self.result_box.add_widget(line)
                 if result:
-                    all_btn = Button(text=f"一键存入全部 {len(result)} 注到购彩记录", size_hint_y=None, height='46dp',
-                                     background_color=BLUE, color=(1, 1, 1, 1), font_size='14sp')
-                    all_btn.bind(on_press=self._save_all)
-                    self.result_box.add_widget(all_btn)
+                    self.result_box.add_widget(
+                        PButton(f"一键存入全部 {len(result)} 注", kind='primary', h=46, fs=14,
+                                on_press=self._save_all))
                 self.gen_btn.disabled = False
-                self.gen_btn.text = "开始选号"
-                self.scroll.scroll_to(self.result_box)
+                self.gen_btn.text = '开始选号'
+                Clock.schedule_once(lambda *a: self.scroll.scroll_to(self.result_box), 0.1)
 
             _show()
 
@@ -1616,95 +2038,115 @@ class GenerateScreen(Screen):
             nxt = self.dm.next_code()
             return nxt, today_str()
         except Exception:
-            return "", today_str()
+            return '', today_str()
 
     def _save_ticket(self, t):
         try:
             code, date = self._latest_code()
-            self.dm.add_record(code, date, t["red"], t["blue"], 1, 2)
-            self._toast("已存入购彩记录")
+            self.dm.add_record(code, date, t['red'], t['blue'], 1, 2)
+            self._toast('已存入购彩记录')
         except Exception as e:
             self._toast(f"保存失败: {e}")
 
     def _save_all(self, *a):
         tickets = getattr(self, '_last_tickets', [])
         if not tickets:
-            self._toast("没有可保存的选号结果")
+            self._toast('没有可保存的选号结果')
             return
         code, date = self._latest_code()
         n = 0
         for t in tickets:
             try:
-                self.dm.add_record(code, date, t["red"], t["blue"], 1, 2)
+                self.dm.add_record(code, date, t['red'], t['blue'], 1, 2)
                 n += 1
             except Exception:
                 pass
         self._toast(f"已存入 {n} 注到购彩记录")
 
     def _toast(self, msg):
-        from kivy.uix.label import Label
-        from kivy.uix.popup import Popup
-        pop = Popup(title="提示", content=Label(text=msg, halign="center"),
-                    size_hint=(0.6, None), height='120dp')
-        pop.open()
+        Toast(msg)
 
 
 # ============================================================
 # 屏幕：回测
 # ============================================================
 
-class BacktestScreen(Screen):
-    def __init__(self, dm, **kw):
+class BacktestScreen(BaseScreen):
+    def __init__(self, dm, state=None, **kw):
         super().__init__(**kw)
         self.dm = dm
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
-        self.content = BoxLayout(orientation='vertical', size_hint_y=None, padding=10, spacing=10)
-        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + 24))
-        self.scroll.add_widget(self.content)
-        self.root.add_widget(self.scroll)
-        self.add_widget(self.root)
+        self._setup()
         self._build()
+        if state:
+            self.restore(state)
+
+    def snapshot(self):
+        return {
+            'p': [self.train.text, self.k.text, self.rounds.text, self.n.text],
+            'fold': self.fold_param._open,
+        }
+
+    def restore(self, state):
+        if not state:
+            return
+        try:
+            for ti, v in zip((self.train, self.k, self.rounds, self.n), state.get('p') or []):
+                ti.text = str(v)
+            if state.get('fold') and not self.fold_param._open:
+                self.fold_param.toggle()
+        except Exception as e:
+            print(f"[回测状态恢复失败] {e}")
+
+    def _param_row(self, label, ti):
+        row = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+        row.add_widget(_lbl(label, 12, 'sub', h=40, size_hint_x=None, width=dp(92)))
+        row.add_widget(ti)
+        return row
+
+    def _build_params(self, body):
+        body.add_widget(Hint('训练窗口=每次用多少期历史计算评分；每期注数=每期机选几注；轮次=重复次数（越多越稳）；数据期数=总共回看多少期。结果与纯随机对照，策略不提高中奖概率。'))
+        self.train = TInput(text='50', hint='训练窗口(期)', input_filter='int')
+        self.k = TInput(text='5', hint='每期注数', input_filter='int')
+        self.rounds = TInput(text='10', hint='轮次', input_filter='int')
+        self.n = TInput(text='200', hint='数据期数', input_filter='int')
+        body.add_widget(self._param_row('训练窗口(期)', self.train))
+        body.add_widget(self._param_row('每期注数', self.k))
+        body.add_widget(self._param_row('轮次', self.rounds))
+        body.add_widget(self._param_row('数据期数', self.n))
 
     def _build(self):
         self.content.clear_widgets()
-        self.content.add_widget(_title_row("回测参数"))
-        self.content.add_widget(_hint("训练窗口=每次用多少期历史计算评分；每期注数=每期机选几注；轮次=重复次数（越多越稳定）；数据期数=总共回看多少期。结果与纯随机对比，策略不提高中奖概率。"))
-        g = GridLayout(cols=2, size_hint_y=None, height='200dp', spacing=8)
-        g.add_widget(Label(text="训练窗口(期):", height='36dp', color=DARK)); self.train = TextInput(text="50", multiline=False, height='36dp')
-        g.add_widget(Label(text="每期注数:", height='36dp', color=DARK)); self.k = TextInput(text="5", multiline=False, height='36dp')
-        g.add_widget(Label(text="轮次:", height='36dp', color=DARK)); self.rounds = TextInput(text="10", multiline=False, height='36dp')
-        g.add_widget(Label(text="数据期数:", height='36dp', color=DARK)); self.n = TextInput(text="200", multiline=False, height='36dp')
-        for w in [self.train, self.k, self.rounds, self.n]:
-            w.input_filter = 'int'
-        for w in [self.train, self.k, self.rounds, self.n]:
-            g.add_widget(w)
-        self.content.add_widget(g)
+        self.fold_param = FoldPanel('回测参数', self._build_params, open=False)
+        self.content.add_widget(self.fold_param)
 
-        self.bt_btn = Button(text="开始回测", size_hint_y=None, height='50dp',
-                              background_color=BLUE, color=(1, 1, 1, 1), font_size='18sp')
-        self.bt_btn.bind(on_press=self._run)
+        self.bt_btn = PButton('开始回测', kind='primary', h=50, fs=16, on_press=self._run)
         self.content.add_widget(self.bt_btn)
 
-        self.bt_result = BoxLayout(orientation='vertical', size_hint_y=None, height='10dp', spacing=5)
+        self.bt_result = BoxLayout(orientation='vertical', size_hint_y=None,
+                                   height=dp(10), spacing=dp(10))
         self.bt_result.bind(minimum_height=self.bt_result.setter('height'))
         self.content.add_widget(self.bt_result)
-        self.content.add_widget(Label(size_hint_y=None, height='60dp'))
+        self.content.add_widget(self._bottom('回测仅作统计演示，不代表未来收益。'))
 
     def _run(self, *args):
         self.bt_btn.disabled = True
-        self.bt_btn.text = "回测中..."
+        self.bt_btn.text = '回测中...'
         self.bt_result.clear_widgets()
 
         def _do():
             try:
-                tl = int(self.train.text); k = int(self.k.text); rnd = int(self.rounds.text); n = int(self.n.text)
-            except:
+                tl = int(self.train.text)
+                k = int(self.k.text)
+                rnd = int(self.rounds.text)
+                n = int(self.n.text)
+            except Exception:
                 @mainthread
                 def _err():
-                    self.bt_btn.disabled = False; self.bt_btn.text = "开始回测"
-                    self.bt_result.add_widget(Label(text="参数错误", color=(1, 0, 0, 1)))
-                _err(); return
+                    self.bt_btn.disabled = False
+                    self.bt_btn.text = '开始回测'
+                    Toast('参数错误，请填写整数')
+                _err()
+                return
 
             rows = self.dm.get_data(n)
             strat = _one_backtest(rows, tl, k, rnd, True)
@@ -1713,36 +2155,33 @@ class BacktestScreen(Screen):
             @mainthread
             def _show():
                 self.bt_result.clear_widgets()
-                self.bt_result.height = 300
-
-                g_names = ["未中奖", "六等奖", "五等奖", "四等奖", "三等奖", "二等奖", "一等奖"]
-
-                def _show_result(title, s):
-                    box = BoxLayout(orientation='vertical', size_hint_y=None, height='120dp')
-                    box.add_widget(Label(text=title, font_size='13sp', bold=True, size_hint_y=None, height='28dp'))
-                    lines = [
-                        f"回测期数: {s['periods']}  总计: {s['total']} 注",
-                        f"中奖: {s['win']} 注 ({s['win_rate'] * 100:.1f}%)",
-                        f"平均红球命中: {s['avg_red']:.2f}  蓝球命中率: {s['blue_rate'] * 100:.1f}%",
-                    ]
-                    for txt in lines:
-                        box.add_widget(Label(text=txt, size_hint_y=None, height='24dp', font_size='11sp', color=GRAY))
-                    self.bt_result.add_widget(box)
-
-                _show_result("【策略选号】", strat)
-                _show_result("【纯随机对照】", rand)
-
-                # 图表
-                try:
-                    p = chart_backtest(strat['grades'], rand['grades'])
-                    if p:
-                        self.bt_result.add_widget(p)
-                except: pass
-
-                self.bt_result.height = self.bt_result.minimum_height
+                for title, s in (('策略选号', strat), ('纯随机对照', rand)):
+                    self.bt_result.add_widget(_card(
+                        SectionTitle(title),
+                        _kv_row('回测期数', f"{s['periods']} 期"),
+                        _kv_row('总注数', f"{s['total']} 注"),
+                        _kv_row('中奖注数', f"{s['win']} 注（{s['win_rate'] * 100:.1f}%）"),
+                        _kv_row('平均红球命中', f"{s['avg_red']:.2f} 个"),
+                        _kv_row('蓝球命中率', f"{s['blue_rate'] * 100:.1f}%"),
+                    ))
+                legend = BoxLayout(size_hint_y=None, height=dp(20), spacing=dp(16))
+                for txt, key in (('策略', 'primary'), ('随机', 'cold')):
+                    seg = BoxLayout(size_hint_x=None, width=dp(58), spacing=dp(5))
+                    dot = Widget(size_hint=(None, None), size=(dp(12), dp(10)))
+                    with dot.canvas.before:
+                        Color(*C(key))
+                        dot.bg = RoundedRectangle(pos=dot.pos, size=dot.size, radius=[dp(2)])
+                    dot.bind(pos=lambda *a, d=dot: setattr(d.bg, 'pos', a[1]),
+                             size=lambda *a, d=dot: setattr(d.bg, 'size', a[1]))
+                    seg.add_widget(dot)
+                    seg.add_widget(_lbl(txt, 11, 'sub', h=18))
+                    legend.add_widget(seg)
+                chart_card = _card(SectionTitle('各奖级中奖分布'), legend,
+                                   BTBarChart(strat['grades'], rand['grades']))
+                self.bt_result.add_widget(chart_card)
                 self.bt_btn.disabled = False
-                self.bt_btn.text = "开始回测"
-                self.scroll.scroll_to(self.bt_result)
+                self.bt_btn.text = '开始回测'
+                Clock.schedule_once(lambda *a: self.scroll.scroll_to(self.bt_result), 0.1)
 
             _show()
 
@@ -1753,75 +2192,128 @@ class BacktestScreen(Screen):
 # 屏幕：购彩记录
 # ============================================================
 
-class RecordsScreen(Screen):
-    def __init__(self, dm, **kw):
+class RecordsScreen(BaseScreen):
+    def __init__(self, dm, state=None, **kw):
         super().__init__(**kw)
         self.dm = dm
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
-        self.content = BoxLayout(orientation='vertical', size_hint_y=None, padding=10, spacing=10)
-        self.content.bind(minimum_height=lambda o, v: setattr(o, 'height', v + 24))
-        self.scroll.add_widget(self.content)
-        self.root.add_widget(self.scroll)
-        self.add_widget(self.root)
+        self._fc = '全部期号'
+        self._fd = '全部日期'
+        self._setup()
+        if state:
+            self._fc = state.get('fc', '全部期号')
+            self._fd = state.get('fd', '全部日期')
         self.refresh()
+        if state and state.get('fold') and not self.fold_add._open:
+            self.fold_add.toggle()
 
     def on_enter(self, *a):
-        # 每次切到记录页都刷新，保证实时更新
+        print('[RS.on_enter] before refresh, fold_add id =', id(self.fold_add),
+              'opacity =', self.fold_add.body.opacity,
+              'parent =', self.fold_add.body.parent)
         self.refresh()
+        print('[RS.on_enter] after refresh, fold_add id =', id(self.fold_add),
+              'opacity =', self.fold_add.body.opacity,
+              'parent =', self.fold_add.body.parent)
+
+    def snapshot(self):
+        return {
+            'fc': getattr(self, 'filter_code', None) and self.filter_code.text or self._fc,
+            'fd': getattr(self, 'filter_date', None) and self.filter_date.text or self._fd,
+            'fold': self.fold_add._open,
+        }
+
+    def restore(self, state):
+        if not state:
+            return
+        self._fc = state.get('fc', '全部期号')
+        self._fd = state.get('fd', '全部日期')
 
     def refresh(self):
         self.content.clear_widgets()
         self._show_stats()
+        self._show_filter()
         self._show_add_form()
         self._show_list()
+        self.content.add_widget(self._bottom('请通过正规渠道购彩，理性投入。'))
 
     def _show_stats(self):
         rows = self.dm.get_data(100000)
         recs, stats = self.dm.check_records(rows)
-        box = BoxLayout(orientation='vertical', size_hint_y=None, height='150dp', padding=5, spacing=2)
-        box.add_widget(Label(text="统计", font_size='14sp', bold=True, size_hint_y=None, height='30dp'))
-        box.add_widget(Label(text=f"总注数: {stats['count']}  待开奖: {stats['pending']}",
-                              size_hint_y=None, height='24dp', font_size='11sp', color=DARK))
-        net_str = f"净盈亏: {stats['net']:+.0f}元"
-        box.add_widget(Label(text=f"投入: {stats['total_in']:.0f}元  中奖: {stats['total_win']:.0f}元  {net_str}",
-                              size_hint_y=None, height='24dp', font_size='11sp',
-                              color=ACCENT if stats['net'] >= 0 else RED))
-        btn = Button(text="一键对奖（按最新开奖核对兑奖）", size_hint_y=None, height='40dp',
-                      background_color=BLUE, color=(1, 1, 1, 1), font_size='13sp')
-        btn.bind(on_press=lambda *a: self._do_check())
-        box.add_widget(btn)
-        self.content.add_widget(box)
+        grid = GridLayout(cols=2, size_hint_y=None, height=dp(66), spacing=dp(2))
+        grid.add_widget(_lbl('总注数', 11, 'hint', h=20))
+        grid.add_widget(_lbl(f"{stats['count']} 注（待开奖 {stats['pending']}）", 12, 'text', h=20))
+        grid.add_widget(_lbl('投入 / 中奖', 11, 'hint', h=20))
+        grid.add_widget(_lbl(f"{stats['total_in']:.0f} 元 / {stats['total_win']:.0f} 元",
+                             12, 'text', h=20))
+        net = stats['net']
+        grid.add_widget(_lbl('净盈亏', 11, 'hint', h=20))
+        grid.add_widget(_lbl(f"{net:+.0f} 元", 13, 'hot' if net >= 0 else 'win',
+                             bold=True, h=20))
+        self.content.add_widget(_card(
+            SectionTitle('统计'),
+            grid,
+            PButton('一键对奖（按最新开奖核对）', kind='soft', h=42, fs=13,
+                    on_press=lambda *a: self._do_check()),
+        ))
 
     def _do_check(self):
         rows = self.dm.get_data(100000)
         recs, stats = self.dm.check_records(rows)
         win = sum(1 for r in recs if r.get('win_grade', 0) > 0)
-        self._popup("对奖完成", f"共 {stats['count']} 注记录，\n已兑奖 {stats['total_win']:.0f} 元，\n中奖 {win} 注，待开奖 {stats['pending']} 注。")
+        self._popup('对奖完成',
+                    f"共 {stats['count']} 注记录\n已兑奖 {stats['total_win']:.0f} 元\n"
+                    f"中奖 {win} 注，待开奖 {stats['pending']} 注")
+        self.refresh()
+
+    def _show_filter(self):
+        recs = self.dm.load_records()
+        codes = ['全部期号'] + sorted({r.get('code', '') for r in recs if r.get('code')},
+                                      reverse=True)
+        dates = ['全部日期'] + sorted({r.get('date', '') for r in recs if r.get('date')},
+                                      reverse=True)
+        if self._fc not in codes:
+            self._fc = '全部期号'
+        if self._fd not in dates:
+            self._fd = '全部日期'
+        row = BoxLayout(size_hint_y=None, height=dp(42), spacing=dp(8))
+        row.add_widget(_lbl('期号', 12, 'sub', h=42, size_hint_x=None, width=dp(34)))
+        self.filter_code = TSpinner(text=self._fc, values=codes,
+                                    size_hint_y=None, height=dp(42))
+        self.filter_code.bind(text=lambda *a: self._on_filter())
+        row.add_widget(self.filter_code)
+        row.add_widget(_lbl('日期', 12, 'sub', h=42, size_hint_x=None, width=dp(34)))
+        self.filter_date = TSpinner(text=self._fd, values=dates,
+                                    size_hint_y=None, height=dp(42))
+        self.filter_date.bind(text=lambda *a: self._on_filter())
+        row.add_widget(self.filter_date)
+        self.content.add_widget(_card(SectionTitle('筛选'), row))
+
+    def _on_filter(self, *a):
+        self._fc = getattr(self, 'filter_code', None) and self.filter_code.text or '全部期号'
+        self._fd = getattr(self, 'filter_date', None) and self.filter_date.text or '全部日期'
+        if hasattr(self, 'list_box'):
+            self._fill_list()
 
     def _show_add_form(self):
-        box = BoxLayout(orientation='vertical', size_hint_y=None, height='340dp', padding=5, spacing=4)
-        box.add_widget(Label(text="添加记录", font_size='14sp', bold=True, size_hint_y=None, height='30dp'))
-
-        self.add_code = TextInput(text=self.dm.next_code(), hint_text="期号（已预填推荐期号）", multiline=False, height='36dp', size_hint_x=1)
-        self.add_date = TextInput(text=today_str(), hint_text="日期", multiline=False, height='36dp', size_hint_x=1)
-        self.add_red = TextInput(hint_text="红球，空格分隔，如 03 08 12 18 25 30", multiline=False, height='36dp', size_hint_x=1)
-        self.add_blue = TextInput(hint_text="蓝球，如 07", multiline=False, height='36dp', size_hint_x=1)
-
-        mn_row = BoxLayout(orientation='horizontal', size_hint_y=None, height='36dp', spacing=4)
-        self.add_mult = TextInput(text="1", hint_text="倍数", multiline=False, height='36dp', size_hint_x=0.3, input_filter='int')
-        self.add_note = TextInput(hint_text="备注（选填）", multiline=False, height='36dp', size_hint_x=0.7)
-        mn_row.add_widget(self.add_mult); mn_row.add_widget(self.add_note)
-
-        for w in [self.add_code, self.add_date, self.add_red, self.add_blue]:
-            box.add_widget(w)
-        box.add_widget(mn_row)
-
-        btn = Button(text="保存记录", size_hint_y=None, height='44dp',
-                      background_color=ACCENT, color=(1, 1, 1, 1))
-        btn.bind(on_press=self._save_record)
-        box.add_widget(btn)
-        self.content.add_widget(box)
+        def builder(body):
+            self.add_code = TInput(text=self.dm.next_code(), hint='期号（已预填推荐期号）')
+            self.add_date = TInput(text=today_str(), hint='日期')
+            self.add_red = TInput(hint='红球，空格分隔，如 03 08 12 18 25 30')
+            self.add_blue = TInput(hint='蓝球，如 07')
+            mrow = BoxLayout(size_hint_y=None, height=dp(40), spacing=dp(8))
+            self.add_mult = TInput(text='1', hint='倍数', input_filter='int')
+            self.add_note = TInput(hint='备注（选填）')
+            mrow.add_widget(self.add_mult)
+            mrow.add_widget(self.add_note)
+            body.add_widget(self.add_code)
+            body.add_widget(self.add_date)
+            body.add_widget(self.add_red)
+            body.add_widget(self.add_blue)
+            body.add_widget(mrow)
+            body.add_widget(PButton('保存记录', kind='primary', h=44, fs=14,
+                                    on_press=self._save_record))
+        self.fold_add = FoldPanel('添加记录', builder, open=False)
+        self.content.add_widget(self.fold_add)
 
     def _save_record(self, *args):
         try:
@@ -1829,166 +2321,172 @@ class RecordsScreen(Screen):
             red_txt = self.add_red.text.strip()
             blue_txt = self.add_blue.text.strip()
             if not red_txt:
-                self._popup("提示", "请先填写红球号码（6个，空格分隔）")
+                self._popup('提示', '请先填写红球号码（6 个，空格分隔）')
                 return
             if not blue_txt:
-                self._popup("提示", "请先填写蓝球号码（01-16）")
+                self._popup('提示', '请先填写蓝球号码（01-16）')
                 return
             red = [int(x) for x in red_txt.split()]
             blue = int(blue_txt)
             if len(red) != 6:
-                self._popup("提示", "红球必须是 6 个号码")
+                self._popup('提示', '红球必须是 6 个号码')
                 return
             if not (1 <= min(red) and max(red) <= 33):
-                self._popup("提示", "红球号码范围 01-33")
+                self._popup('提示', '红球号码范围 01-33')
                 return
             if not (1 <= blue <= 16):
-                self._popup("提示", "蓝球号码范围 01-16")
+                self._popup('提示', '蓝球号码范围 01-16')
                 return
             self.dm.add_record(code, self.add_date.text, red, blue,
-                               int(self.add_mult.text) or 1, (int(self.add_mult.text) or 1) * 2,
+                               int(self.add_mult.text) or 1,
+                               (int(self.add_mult.text) or 1) * 2,
                                self.add_note.text)
-            self.add_red.text = ""; self.add_blue.text = ""; self.add_note.text = ""
+            self.add_red.text = ''
+            self.add_blue.text = ''
+            self.add_note.text = ''
+            Toast('已保存记录')
             self.refresh()
         except Exception as e:
-            self._popup("错误", str(e))
+            self._popup('错误', str(e))
 
     def _show_list(self):
+        self.list_box = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(10))
+        self.list_box.bind(minimum_height=self.list_box.setter('height'))
+        self.content.add_widget(self.list_box)
+        self._fill_list()
+
+    def _fill_list(self):
+        self.list_box.clear_widgets()
         rows = self.dm.get_data(100000)
         recs, _ = self.dm.check_records(rows)
+        fc = getattr(self, 'filter_code', None) and self.filter_code.text or '全部期号'
+        fd = getattr(self, 'filter_date', None) and self.filter_date.text or '全部日期'
+        if fc != '全部期号':
+            recs = [r for r in recs if r.get('code') == fc]
+        if fd != '全部日期':
+            recs = [r for r in recs if r.get('date') == fd]
         if not recs:
-            self.content.add_widget(Label(text="暂无记录", color=GRAY, size_hint_y=None, height='60dp'))
+            self.list_box.add_widget(_card(_lbl('暂无记录', 13, 'hint', h=40)))
             return
-        self.content.add_widget(_title_row(f"购彩记录 ({len(recs)} 条)"))
+        self.list_box.add_widget(SectionTitle(f"购彩记录（{len(recs)} 条）"))
         for rec in reversed(recs[-50:]):
-            card = BoxLayout(orientation='vertical', size_hint_y=None, height='64dp',
-                              padding=5, spacing=2)
-            with card.canvas.before:
-                Color(1, 1, 1, 1)
-                card.bg = RoundedRectangle(pos=card.pos, size=card.size, radius=[6])
-            card.bind(pos=lambda *a, c=card: setattr(c.bg, 'pos', a[1]),
-                      size=lambda *a, c=card: setattr(c.bg, 'size', a[1]))
-            top = BoxLayout(size_hint_y=None, height='26dp', spacing=4)
-            top.add_widget(Label(text=f"{rec.get('code', '?')} {rec.get('date', '')}",
-                                  size_hint_x=0.32, height='24dp', font_size='10sp', color=DARK))
+            head = BoxLayout(size_hint_y=None, height=dp(32), spacing=dp(6))
+            head.add_widget(_lbl(f"{rec.get('code', '?')} · {rec.get('date', '')}", 11, 'sub',
+                                 h=32, size_hint_x=1))
             st = rec.get('status', '未开奖')
-            clr = ACCENT if '一' in st or '二' in st or '三' in st else (RED if '未中奖' in st else GRAY)
-            top.add_widget(Label(text=st, size_hint_x=0.22, height='24dp', font_size='10sp', color=clr))
-            top.add_widget(Label(text=f"{rec.get('win_amount', 0):.0f}元", size_hint_x=0.14, height='24dp',
-                                  font_size='10sp', color=ACCENT if rec.get('win_amount', 0) > 0 else GRAY))
-            cp_btn = Button(text="复制", size_hint_x=0.16, height='24dp', font_size='11sp',
-                             background_color=ACCENT, color=(1, 1, 1, 1))
-            def _copy_num(*a, rr=rec):
-                from kivy.core.clipboard import Clipboard
-                txt = ' '.join(f"{x:02d}" for x in rr.get('red', [])) + ' + ' + f"{rr.get('blue', 0):02d}"
-                Clipboard.copy(txt)
-                self._popup("复制成功", "已复制到剪贴板：\n" + txt)
-            cp_btn.bind(on_press=_copy_num)
-            top.add_widget(cp_btn)
-            del_btn = Button(text="删除", size_hint_x=0.16, height='24dp', font_size='11sp',
-                              background_color=(0.95, 0.95, 0.95, 1), color=(0.6, 0.6, 0.6, 1))
-            rid = rec['id']
-            del_btn.bind(on_press=lambda *a, r=rid: self._del_record(r))
-            top.add_widget(del_btn)
-            card.add_widget(top)
-            balls = BoxLayout(size_hint_y=None, height='26dp', spacing=3)
-            for x in rec.get("red", []): balls.add_widget(_ball_label(f"{x:02d}", 0.85, RED, '26dp'))
-            balls.add_widget(_ball_label(f"{rec.get('blue', 0):02d}", 0.85, BLUE, '26dp'))
-            rh = rec.get('red_hit', '?')
-            bh = rec.get('blue_hit', '?')
-            balls.add_widget(Label(text=f"红:{rh} 蓝:{bh}", size_hint_x=0.2, height='24dp', font_size='10sp', color=GRAY))
-            card.add_widget(balls)
-            self.content.add_widget(card)
-        self.content.add_widget(Label(size_hint_y=None, height='110dp'))
+            win = rec.get('win_amount', 0) or 0
+            kind = 'win' if win > 0 else ('cold' if st == '未中奖' else 'dim')
+            head.add_widget(Capsule(st, kind, w=dp(58), h=dp(24), fs=dp(10)))
+            head.add_widget(IconBtn('copy', on_press=lambda *a, rr=rec: self._copy(rr), d=32,
+                                    icon_size=16))
+            head.add_widget(IconBtn('trash', on_press=lambda *a, r=rec['id']: self._del_record(r),
+                                    d=32, icon_size=16))
+            balls = BoxLayout(size_hint_y=None, height=dp(28), spacing=dp(4))
+            for x in rec.get('red', []):
+                balls.add_widget(_cap(f"{x:02d}", 'red', w=26, h=26, fs=11))
+            balls.add_widget(_cap(f"{rec.get('blue', 0):02d}", 'blue', w=26, h=26, fs=11))
+            balls.add_widget(_lbl(f"红 {rec.get('red_hit', '-')} · 蓝 {rec.get('blue_hit', '-')}",
+                                  10, 'hint', h=28, size_hint_x=1, halign='right'))
+            foot = _lbl(f"中奖 {win:.0f} 元　倍数 {rec.get('mult', 1)}　{rec.get('note', '')}",
+                        10, 'hint', h=18)
+            self.list_box.add_widget(_card(head, balls, foot))
+
+    def _copy(self, rec):
+        try:
+            from kivy.core.clipboard import Clipboard
+            txt = ' '.join(f"{x:02d}" for x in rec.get('red', [])) + ' + ' + f"{rec.get('blue', 0):02d}"
+            Clipboard.copy(txt)
+            Toast('已复制：' + txt)
+        except Exception as e:
+            Toast(f"复制失败: {e}")
 
     def _del_record(self, rid):
         self.dm.delete_record(rid)
+        Toast('已删除该记录')
         self.refresh()
 
     def _popup(self, title, msg):
-        popup = Popup(title=title, content=Label(text=msg, size_hint=(1, 1)),
-                      size_hint=(0.8, 0.4))
-        popup.open()
-
-
-# ============================================================
-# Tab 导航栏
-# ============================================================
-
-class TabBar(GridLayout):
-    def __init__(self, sm, **kw):
-        super().__init__(**kw)
-        self.cols = 5
-        self.size_hint_y = None
-        self.height = '50dp'
-        self.row_default_height = '50dp'
-        self.tab_labels = []
-        tabs = [("概览", sm), ("分析", sm), ("选号", sm), ("回测", sm), ("记录", sm)]
-        for i, (name, _) in enumerate(tabs):
-            btn = Button(text=name, font_size='14sp', background_color=get_color_from_hex("#F0F0F0"),
-                          color=DARK)
-            btn.bind(on_press=lambda *a, idx=i: self._switch(idx))
-            self.tab_labels.append(btn)
-            self.add_widget(btn)
-
-    def _switch(self, idx):
-        # handled by parent
-        pass
+        TPopup(title, msg).open()
 
 
 # ============================================================
 # App
 # ============================================================
 
+SCREEN_DEFS = [
+    ('overview', 'OverviewScreen'),
+    ('analysis', 'AnalysisScreen'),
+    ('generate', 'GenerateScreen'),
+    ('backtest', 'BacktestScreen'),
+    ('records', 'RecordsScreen'),
+]
+
+
 class SSQApp(App):
     title = "双色球选号"
 
     def build(self):
-        # data dir: use Kivy's user_data_dir (cross-platform, works on Android/desktop)
         data_dir = self.user_data_dir
         try:
             Path(data_dir).mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
-
         self.dm = DataManager(data_dir)
 
-        # screens
-        sm = ScreenManager()
-        sm.add_widget(OverviewScreen(self.dm, name='overview'))
-        sm.add_widget(AnalysisScreen(self.dm, name='analysis'))
-        sm.add_widget(GenerateScreen(self.dm, name='generate'))
-        sm.add_widget(BacktestScreen(self.dm, name='backtest'))
-        sm.add_widget(RecordsScreen(self.dm, name='records'))
+        self.sm = ScreenManager()
+        self.screens = {}
+        for name, cls_name in SCREEN_DEFS:
+            s = globals()[cls_name](self.dm, name=name)
+            self.screens[name] = s
+            self.sm.add_widget(s)
 
-        # main layout
-        main = BoxLayout(orientation='vertical')
-        main.add_widget(sm)
+        self.root_box = BoxLayout(orientation='vertical')
+        self.root_box.add_widget(self.sm)
+        self.compliance = ComplianceBar()
+        self.root_box.add_widget(self.compliance)
+        self.bottom = BottomBar(self.sm)
+        self.root_box.add_widget(self.bottom)
+        self.sm.bind(current=lambda *a: self.bottom.refresh())
 
-        # tab bar
-        tb = TabBar(sm)
-        # wire tabs to screen switching
-        tab_names = ['overview', 'analysis', 'generate', 'backtest', 'records']
-        for i, btn in enumerate(tb.tab_labels):
-            idx = i
-            btn.bind(on_press=lambda *a, i=idx: setattr(sm, 'current', tab_names[i]))
-        main.add_widget(tb)
+        Window.clearcolor = C('bg')
+        return self.root_box
 
-        # highlight first tab
-        tb.tab_labels[0].background_color = BLUE
-        tb.tab_labels[0].color = (1, 1, 1, 1)
+    def rebuild_theme(self):
+        """主题切换：整页重建并恢复输入状态"""
+        _Theme.toggle()
+        Window.clearcolor = C('bg')
+        cur = self.sm.current
+        states = {}
+        for name, _ in SCREEN_DEFS:
+            s = self.screens.get(name)
+            if s is not None and hasattr(s, 'snapshot'):
+                try:
+                    states[name] = s.snapshot()
+                except Exception:
+                    states[name] = None
 
-        def _on_current(inst, val):
-            for i, btn in enumerate(tb.tab_labels):
-                if tab_names[i] == val:
-                    btn.background_color = BLUE
-                    btn.color = (1, 1, 1, 1)
-                else:
-                    btn.background_color = get_color_from_hex("#F0F0F0")
-                    btn.color = DARK
-        sm.bind(current=_on_current)
+        self.sm.clear_widgets()
+        self.screens = {}
+        for name, cls_name in SCREEN_DEFS:
+            try:
+                s = globals()[cls_name](self.dm, name=name, state=states.get(name))
+            except Exception as e:
+                print(f"[重建失败] {name}: {e}")
+                s = globals()[cls_name](self.dm, name=name)
+            self.screens[name] = s
+            self.sm.add_widget(s)
 
-        return main
+        self.root_box.remove_widget(self.compliance)
+        self.root_box.remove_widget(self.bottom)
+        self.compliance = ComplianceBar()
+        self.root_box.add_widget(self.compliance)
+        self.bottom = BottomBar(self.sm)
+        self.root_box.add_widget(self.bottom)
+        self.sm.bind(current=lambda *a: self.bottom.refresh())
+
+        self.sm.current = cur if cur in self.screens else 'overview'
+        self.bottom.refresh()
+        Toast('已切换%s模式' % ('深色' if _Theme.mode == 'dark' else '浅色'))
 
 
 if __name__ == '__main__':
