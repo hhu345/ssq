@@ -1545,8 +1545,13 @@ class BottomBar(BoxLayout):
 
 class BaseScreen(Screen):
     def _setup(self):
-        self.root = BoxLayout(orientation='vertical')
-        self.scroll = ScrollView(do_scroll_x=False)
+        # Screen 继承 RelativeLayout：子节点若不显式 size_hint 会卡在默认
+        # (None, None) + size=(100, 100)，整页就挤压在左上 100x100 的角落里，
+        # 触摸命中 (hit-test) 也按这个 100x100 算，导致用户的触摸大量"丢失"、
+        # 切到 records 这种长内容页时整页陷入"切换不响应"。这里显式把 root
+        # 和 scroll 跟随 Screen 尺寸。
+        self.root = BoxLayout(orientation='vertical', size_hint=(1, 1))
+        self.scroll = ScrollView(do_scroll_x=False, size_hint=(1, 1))
         self.content = BoxLayout(orientation='vertical', size_hint_y=None,
                                  padding=dp(12), spacing=dp(12))
         # minimum_height 不含 padding 的全部补偿 + 底部导航避让
@@ -2209,13 +2214,7 @@ class RecordsScreen(BaseScreen):
             self.fold_add.toggle()
 
     def on_enter(self, *a):
-        print('[RS.on_enter] before refresh, fold_add id =', id(self.fold_add),
-              'opacity =', self.fold_add.body.opacity,
-              'parent =', self.fold_add.body.parent)
         self.refresh()
-        print('[RS.on_enter] after refresh, fold_add id =', id(self.fold_add),
-              'opacity =', self.fold_add.body.opacity,
-              'parent =', self.fold_add.body.parent)
 
     def snapshot(self):
         return {
