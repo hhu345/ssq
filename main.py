@@ -1661,15 +1661,17 @@ class OverviewScreen(BaseScreen):
 
         allrows = self.dm.get_data(100000)
         shown = allrows[-min(12, len(allrows)):]
-        hist = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(6))
+        hist = BoxLayout(orientation='vertical', size_hint_y=None, spacing=dp(8))
         hist.bind(minimum_height=hist.setter('height'))
         for hr in reversed(shown):
-            line = BoxLayout(size_hint_y=None, height=dp(26), spacing=dp(4))
-            line.add_widget(_lbl(f"{hr['code']}", 10, 'hint', h=26,
-                                 size_hint_x=None, width=dp(62)))
+            # 整行用 WrapBox 流式：期号 + 6 红 + 1 蓝按可用宽度自动折行，
+            # 避免窄屏/高 dpi 下 7 球被横向裁切到只剩 4 个。
+            line = WrapBox(spacing=dp(6), line_gap=dp(6), size_hint_y=None)
+            line.add_widget(_lbl(f"期{hr['code']}", 10, 'hint', h=26,
+                                 size_hint_x=None, width=54, halign='left'))
             for x in hr['red']:
-                line.add_widget(_cap(f"{x:02d}", 'red', w=26, h=24, fs=11))
-            line.add_widget(_cap(f"{hr['blue']:02d}", 'blue', w=26, h=24, fs=11))
+                line.add_widget(_cap(f"{x:02d}", 'red', w=24, h=24, fs=10))
+            line.add_widget(_cap(f"{hr['blue']:02d}", 'blue', w=24, h=24, fs=10))
             hist.add_widget(line)
         if not shown:
             hist.add_widget(_lbl('暂无历史数据', 12, 'hint', h=30))
